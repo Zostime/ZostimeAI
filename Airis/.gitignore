@@ -1,0 +1,21 @@
+# 缓存和日志
+Files/cache/
+Files/logs/
+
+# 环境变量
+Files/config/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
