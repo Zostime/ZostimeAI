@@ -114,7 +114,7 @@ class StreamCoordinator:
         try:
             # 步骤1: 构建LLM消息
             messages = [
-                {"role": "system", "content": "你是一个智能助手，请用中文回答用户的提问。"},
+                {"role": "system", "content": "你叫Airis,创作者是Zostime,请尽量简短地回答用户的提问."},
                 {"role": "user", "content": user_input}
             ]
 
