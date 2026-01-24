@@ -1,21 +1,431 @@
-# 缓存和日志
-Files/cache/
-Files/logs/
+# Airis项目 .gitignore 文件
+# 创建者: Zostime
+# 版本: 1.0.0
 
-# 环境变量
-Files/config/.env
-
-# Python
+# ================================
+# Python特定文件
+# ================================
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+*.pyd
 
-# IDE
-.vscode/
+# 虚拟环境（所有类型）
+.venv/
+venv/
+env/
+ENV/
+env*/
+
+# 分发/打包文件
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# 安装日志
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 单元测试/覆盖率报告
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre类型检查器
+.pyre/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ================================
+# IDE和编辑器文件
+# ================================
+# IntelliJ IDEA
 .idea/
+*.iml
+*.ipr
+*.iws
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+._*
+
+# Linux
+*~
+
+# ================================
+# 项目配置文件（包含敏感信息）
+# ================================
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# API密钥和配置（示例文件应保留）
+Files/config/*.env
+Files/config/config.json
+Files/config/memory_config.json
+Files/config/*.key
+Files/config/*.secret
+Files/config/*.pem
+Files/config/*.crt
+
+# 但保留示例配置文件
+!Files/config/.env.example
+!Files/config/config.example.json
+!Files/config/memory_config.example.json
+
+# ================================
+# 缓存和临时文件
+# ================================
+# 项目缓存
+Files/cache/
+!Files/cache/.gitkeep
+
+# 日志文件
+Files/logs/
+!Files/logs/.gitkeep
+
+# 存储文件（用户数据）
+Files/storage/
+!Files/storage/.gitkeep
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.backup
+*.sav
 *.swp
 *.swo
 
-# 系统
-.DS_Store
+# ================================
+# LLM/TTS相关文件
+# ================================
+# TTS音频缓存
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.aac
+
+# LLM响应缓存
+*.cache
+*.pkl
+*.pickle
+*.jsonl
+
+# ================================
+# 数据库和存储文件
+# ================================
+# SQLite数据库
+*.db
+*.sqlite
+*.sqlite3
+*.db3
+
+# 其他数据库文件
+*.dump
+*.sql
+*.log
+
+# ================================
+# 文档和测试输出
+# ================================
+# 文档构建输出
+docs/_build/
+docs/build/
+site/
+_build/
+
+# 测试输出
+test_output/
+test_results/
+test_data/
+.coverage
+htmlcov/
+
+# ================================
+# 构建和部署文件
+# ================================
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Kubernetes
+.kube/
+
+# 云服务配置
+.aws/
+.gcloud/
+.azure/
+
+# ================================
+# 证书和密钥文件
+# ================================
+# SSL证书
+*.pem
+*.crt
+*.key
+*.cer
+*.csr
+*.p12
+*.pfx
+
+# SSH密钥
+id_rsa
+id_dsa
+*.pem
+*.ppk
+id_rsa.pub
+id_dsa.pub
+
+# ================================
+# 压缩文件
+# ================================
+# 归档文件
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.bz2
+*.xz
+
+# ================================
+# 多媒体文件
+# ================================
+# 音频/视频文件
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# 图像文件
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.ico
+*.svg
+
+# ================================
+# 大型数据集
+# ================================
+# 机器学习模型
+*.h5
+*.hdf5
+*.pth
+*.pt
+*.model
+*.ckpt
+
+# 数据集文件
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.arrow
+
+# ================================
+# 操作系统文件
+# ================================
+# Windows
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+._*
+
+# Linux
+*~
+
+# ================================
+# 其他杂项文件
+# ================================
+# 项目状态
+.project
+.classpath
+.settings/
+
+# 包管理器
+node_modules/
+bower_components/
+
+# 代码覆盖率
+.coveragerc
+
+# 杂项
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# 项目锁文件（除了requirements.txt）
+Pipfile.lock
+poetry.lock
+package-lock.json
+yarn.lock
+
+# ================================
+# 特定于开发环境的文件
+# ================================
+# 开发环境配置
+.devcontainer/
+.vscode/
+
+# 本地开发设置
+local_settings.py
+local_config.py
+
+# 调试文件
+debug.log
+debug_*.log
+
+# ================================
+# 版本控制系统
+# ================================
+# Git
+.gitignore
+.gitattributes
+
+# SVN
+.svn/
+
+# Mercurial
+.hg/
+
+# ================================
+# 自定义规则（根据项目需要）
+# ================================
+# 忽略特定文件模式
+# *.custom
+
+# 但保留必要的空目录标记文件
+!.gitkeep
+!.keep
+!README.md
+
+# ================================
+# 项目特定规则
+# ================================
+# 确保核心代码被跟踪
+!core/
+core/**/*
+!core/llm/
+core/llm/**/*
+!core/memory/
+core/memory/**/*
+!core/tts/
+core/tts/**/*
+
+# 确保必要的目录结构被保留
+!Files/
+Files/**/*
+!Files/config/
+Files/config/**/*
+!Files/logs/.gitkeep
+!Files/cache/.gitkeep
+!Files/storage/.gitkeep
+
+# ================================
+# 规则例外
+# ================================
+# 不忽略Python源文件
+!*.py
+
+# 不忽略Markdown文档
+!*.md
+
+# 不忽略文本文件
+!*.txt
+
+# 不忽略配置文件示例
+!*.example
+!*.sample
+
+# 不忽略LICENSE文件
+!LICENSE*
+
+# 不忽略README文件
+!README*

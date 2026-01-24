@@ -193,47 +193,88 @@ class CacheManager:
 
 
 class AudioStreamManager:
-    """音频流管理器"""
+    """音频流管理器（重构版）"""
 
-    def __init__(self, config: ConfigManager):
+    def __init__(self, config: ConfigManager, disable_internal_playback: bool = False):
+        """
+        初始化音频流管理器
+
+        Args:
+            config: 配置管理器
+            disable_internal_playback: 是否禁用内部播放（用于避免双重播放）
+        """
         self.config = config
+        self.disable_internal_playback = disable_internal_playback
 
+        # 读取配置
         audio_queue_size = int(config.get('streaming.audio_queue_size', 200))
         self.stream_chunk_size = int(config.get('streaming.stream_chunk_size', 2048))
-
-        # 修正：直接使用布尔值，而不是字符串
-        realtime_playback_value = config.get('streaming.realtime_playback', True)
-        if isinstance(realtime_playback_value, str):
-            self.realtime_playback = realtime_playback_value.lower() == 'true'
-        else:
-            self.realtime_playback = bool(realtime_playback_value)
-
         self.playback_buffer_ms = int(config.get('streaming.playback_buffer_ms', 200))
 
+        # 读取实时播放配置，但根据disable_internal_playback参数决定是否启用
+        realtime_playback_value = config.get('streaming.realtime_playback', True)
+        if isinstance(realtime_playback_value, str):
+            config_realtime_playback = realtime_playback_value.lower() == 'true'
+        else:
+            config_realtime_playback = bool(realtime_playback_value)
+
+        # 最终决定是否启用实时播放
+        self.realtime_playback_enabled = config_realtime_playback and not disable_internal_playback
+
+        # 初始化队列
         self.audio_queue = queue.Queue(maxsize=audio_queue_size)
+
+        # 播放状态
         self.is_playing = False
+        self.should_play = False  # 控制是否应该播放的标志
         self.playback_thread = None
         self.audio_stream = None
-        self.shutdown_flag = False
+        self.shutdown_flag = threading.Event()
 
+        # 音频参数
         self.audio_format = pyaudio.paInt16
         self.channels = 1
         self.sample_rate = 24000
         self.chunk_size = 1024
 
-        try:
-            self.pyaudio_instance = pyaudio.PyAudio()
-            logging.info("音频系统初始化成功")
-        except Exception as e:
-            logging.error(f"音频系统初始化失败: {e}")
-            self.pyaudio_instance = None
+        # 初始化PyAudio（但仅在需要播放时创建实例）
+        self.pyaudio_instance = None
+        if self.realtime_playback_enabled:
+            try:
+                self.pyaudio_instance = pyaudio.PyAudio()
+                logging.info("PyAudio初始化成功（内部播放已启用）")
+            except Exception as e:
+                logging.error(f"PyAudio初始化失败: {e}")
+                self.pyaudio_instance = None
+        else:
+            logging.info("内部音频播放已禁用，仅用于音频数据管理")
+
+    def enable_playback(self, enable: bool = True):
+        """启用或禁用播放功能"""
+        if enable and self.pyaudio_instance is None:
+            try:
+                self.pyaudio_instance = pyaudio.PyAudio()
+                logging.info("已启用内部音频播放")
+            except Exception as e:
+                logging.error(f"启用内部音频播放失败: {e}")
+                return False
+        elif not enable:
+            self.stop_playback()
+            if self.pyaudio_instance:
+                self.pyaudio_instance.terminate()
+                self.pyaudio_instance = None
+                logging.info("已禁用内部音频播放")
+
+        self.should_play = enable and self.pyaudio_instance is not None
+        return self.should_play
 
     def add_audio_chunk(self, audio_data: bytes):
-        """添加音频数据块"""
+        """添加音频数据块到队列"""
         try:
-            if self.shutdown_flag or not audio_data:
-                return
+            if self.shutdown_flag.is_set() or not audio_data:
+                return False
 
+            # 将数据分割成合适大小的块
             for i in range(0, len(audio_data), self.stream_chunk_size):
                 chunk = audio_data[i:i + self.stream_chunk_size]
                 if chunk:
@@ -241,29 +282,43 @@ class AudioStreamManager:
                         self.audio_queue.put(chunk, timeout=1)
                     except queue.Full:
                         try:
+                            # 队列满时，丢弃最旧的数据
                             self.audio_queue.get_nowait()
                             self.audio_queue.put(chunk, timeout=1)
                         except queue.Empty:
                             pass
 
-            if not self.is_playing and self.realtime_playback and self.pyaudio_instance and not self.shutdown_flag:
+            # 如果启用实时播放且尚未开始播放，则启动播放
+            if (self.realtime_playback_enabled and self.should_play and
+                    not self.is_playing and self.pyaudio_instance and
+                    not self.shutdown_flag.is_set()):
                 self.start_playback()
+
+            return True
 
         except Exception as e:
             logging.error(f"添加音频数据块失败: {e}")
+            return False
 
     def start_playback(self):
-        """开始播放"""
-        if self.is_playing or not self.pyaudio_instance or self.shutdown_flag:
-            return
+        """开始播放音频"""
+        if (self.is_playing or not self.pyaudio_instance or
+                not self.should_play or self.shutdown_flag.is_set()):
+            return False
 
         self.is_playing = True
-        self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self.playback_thread = threading.Thread(
+            target=self._playback_loop,
+            daemon=True,
+            name="AudioPlayback"
+        )
         self.playback_thread.start()
+        return True
 
     def _playback_loop(self):
         """播放循环"""
         try:
+            # 打开音频输出流
             self.audio_stream = self.pyaudio_instance.open(
                 format=self.audio_format,
                 channels=self.channels,
@@ -275,25 +330,33 @@ class AudioStreamManager:
             playback_buffer = bytearray()
             buffer_target_bytes = int(self.sample_rate * 2 * self.playback_buffer_ms / 1000)
 
-            while self.is_playing and not self.shutdown_flag:
+            logging.info("音频播放循环开始")
+
+            while self.is_playing and not self.shutdown_flag.is_set():
                 try:
+                    # 从队列获取音频数据
                     audio_chunk = self.audio_queue.get(timeout=0.1)
                     playback_buffer.extend(audio_chunk)
 
+                    # 当缓冲区达到目标大小时播放
                     if len(playback_buffer) >= buffer_target_bytes:
                         self.audio_stream.write(bytes(playback_buffer))
                         playback_buffer.clear()
 
                 except queue.Empty:
+                    # 队列为空时，播放缓冲区剩余数据
                     if playback_buffer:
                         self.audio_stream.write(bytes(playback_buffer))
                         playback_buffer.clear()
+
+                    # 短暂休眠避免忙等待
                     time.sleep(0.01)
 
                 except Exception as e:
                     logging.error(f"播放音频时出错: {e}")
                     break
 
+            # 播放缓冲区剩余数据
             if playback_buffer:
                 self.audio_stream.write(bytes(playback_buffer))
 
@@ -302,6 +365,7 @@ class AudioStreamManager:
         finally:
             self._cleanup_playback()
             self.is_playing = False
+            logging.info("音频播放循环结束")
 
     def _cleanup_playback(self):
         """清理播放资源"""
@@ -315,23 +379,52 @@ class AudioStreamManager:
 
     def stop_playback(self):
         """停止播放"""
-        self.shutdown_flag = True
+        logging.info("正在停止音频播放...")
+        self.shutdown_flag.set()
         self.is_playing = False
-        self.clear_queue()
 
-        if self.playback_thread:
-            self.playback_thread.join(timeout=1)
+        # 等待播放线程结束
+        if self.playback_thread and self.playback_thread.is_alive():
+            self.playback_thread.join(timeout=1.0)
 
         self._cleanup_playback()
-        self.shutdown_flag = False
+        self.shutdown_flag.clear()
+
+        # 清空队列
+        self.clear_queue()
+
+    def get_audio_chunk(self, timeout: float = 0.1) -> Optional[bytes]:
+        """从队列获取音频数据块（供外部播放器使用）"""
+        try:
+            return self.audio_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        except Exception as e:
+            logging.error(f"获取音频数据块失败: {e}")
+            return None
 
     def clear_queue(self):
-        """清空队列"""
+        """清空音频队列"""
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
             except queue.Empty:
                 break
+
+    def get_queue_size(self) -> int:
+        """获取队列大小"""
+        return self.audio_queue.qsize()
+
+    def get_status(self) -> Dict[str, Any]:
+        """获取状态信息"""
+        return {
+            "is_playing": self.is_playing,
+            "should_play": self.should_play,
+            "queue_size": self.get_queue_size(),
+            "realtime_playback_enabled": self.realtime_playback_enabled,
+            "has_pyaudio_instance": self.pyaudio_instance is not None,
+            "playback_thread_alive": self.playback_thread is not None and self.playback_thread.is_alive()
+        }
 
 
 def assemble_ws_auth_url(request_url: str, method: str = "GET",
@@ -379,27 +472,52 @@ def assemble_ws_auth_url(request_url: str, method: str = "GET",
 
 
 class TTSClient:
-    """TTS客户端（支持多种提供商）"""
+    """TTS客户端（重构版）- 支持多种提供商"""
 
-    def __init__(self, provider: str = None):
-        """初始化TTS客户端
+    def __init__(self, provider: str = None, disable_internal_playback: bool = False):
+        """
+        初始化TTS客户端
 
         Args:
             provider: 提供商名称，如 'xfyun', 'azure'
+            disable_internal_playback: 是否禁用内部播放（避免双重播放）
         """
         print("=" * 60)
         print("初始化 TTS 客户端")
         print("=" * 60)
 
+        # 初始化管理器
         self.config = ConfigManager()
         self.logger = LogManager(self.config, "TTS")
         self.cache_manager = CacheManager(self.config, "TTS")
-        self.audio_stream = AudioStreamManager(self.config)
+
+        # 初始化音频流管理器，传递禁用内部播放标志
+        self.audio_stream = AudioStreamManager(self.config, disable_internal_playback)
 
         # 确定提供商
         self.provider = provider or self.config.get('tts.provider', 'xfyun')
+        self.disable_internal_playback = disable_internal_playback
 
         # 获取提供商特定配置
+        self._load_provider_config()
+
+        # 流式处理状态
+        self.is_streaming = False
+        self.current_stream_id = None
+        self.stream_callback = None
+        self.ws = None
+        self.ws_thread = None
+        self.completion_event = threading.Event()
+        self.stream_lock = threading.Lock()
+        self.stream_error = None
+        self.current_text = ""
+
+        logging.info(f"TTS客户端初始化完成 - 提供商: {self.provider}")
+        if self.disable_internal_playback:
+            logging.info("内部音频播放已禁用（避免双重播放）")
+
+    def _load_provider_config(self):
+        """加载提供商配置"""
         if self.provider == 'xfyun':
             self.app_id = self.config.get('TTS_APP_ID')
             self.api_key = self.config.get('TTS_API_KEY')
@@ -413,51 +531,64 @@ class TTSClient:
             self.endpoint = provider_config.get('endpoint')
 
             # 验证必要配置
-            if not all([self.app_id, self.api_key, self.api_secret, self.endpoint]):
-                missing = []
-                if not self.app_id: missing.append("TTS_APP_ID")
-                if not self.api_key: missing.append("TTS_API_KEY")
-                if not self.api_secret: missing.append("TTS_API_SECRET")
-                if not self.endpoint: missing.append("endpoint")
-                raise ValueError(f"缺少必要TTS配置: {', '.join(missing)}")
+            self._validate_xfyun_config()
 
         elif self.provider == 'azure':
             # Azure配置
             provider_config = self.config.get_json('tts.azure')
             self.region = provider_config.get('region')
             self.voice = provider_config.get('voice')
+            self.endpoint = provider_config.get('endpoint')
+            self.api_key = provider_config.get('api_key')
         else:
             raise ValueError(f"不支持的TTS提供商: {self.provider}")
 
-        # 流式处理状态
-        self.is_streaming = False
-        self.current_stream_id = None
-        self.stream_callback = None
-        self.ws = None
-        self.ws_thread = None
-        self.completion_event = threading.Event()
-        self.stream_lock = threading.Lock()
-        self.stream_error = None
-
-        logging.info(f"TTS客户端初始化完成 - 提供商: {self.provider}")
+    def _validate_xfyun_config(self):
+        """验证讯飞配置"""
+        if not all([self.app_id, self.api_key, self.api_secret, self.endpoint]):
+            missing = []
+            if not self.app_id: missing.append("TTS_APP_ID")
+            if not self.api_key: missing.append("TTS_API_KEY")
+            if not self.api_secret: missing.append("TTS_API_SECRET")
+            if not self.endpoint: missing.append("endpoint")
+            raise ValueError(f"缺少必要TTS配置: {', '.join(missing)}")
 
     def _clean_text_for_tts(self, text: str) -> str:
-        """清理文本"""
+        """清理文本，移除不适合TTS的内容"""
         if not text:
             return ""
 
         cleaned = text
+
+        # 移除代码块
         cleaned = re.sub(r'```[\s\S]*?```', '', cleaned)
         cleaned = re.sub(r'`.*?`', '', cleaned)
+
+        # 移除链接
         cleaned = re.sub(r'\[.*?\]\(.*?\)', '', cleaned)
+
+        # 移除特殊字符，保留中英文、数字、标点
         cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s，。！？、；："\'（）《》.,!?;:"\'()\-\n]', '', cleaned)
+
+        # 合并多个空格
         cleaned = re.sub(r'\s+', ' ', cleaned)
+
+        # 合并多个换行
         cleaned = re.sub(r'\n\s*\n', '\n', cleaned)
 
         return cleaned.strip()
 
     def text_to_speech_stream(self, text: str, stream_callback: Callable[[bytes], None] = None) -> bool:
-        """文本转语音流式合成"""
+        """
+        文本转语音流式合成
+
+        Args:
+            text: 要合成的文本
+            stream_callback: 音频数据回调函数
+
+        Returns:
+            bool: 是否成功启动合成
+        """
         with self.stream_lock:
             if self.is_streaming:
                 logging.warning("已有流式合成在进行中")
@@ -467,6 +598,7 @@ class TTSClient:
                 logging.warning("未提供要合成的文本")
                 return False
 
+            # 清理文本
             cleaned_text = self._clean_text_for_tts(text)
             if not cleaned_text:
                 logging.warning("清理后的文本为空")
@@ -474,25 +606,28 @@ class TTSClient:
 
             logging.info(f"开始流式合成文本（长度 {len(cleaned_text)}）")
 
+            # 设置流式处理状态
             self.stream_callback = stream_callback
             self.completion_event.clear()
             self.audio_stream.clear_queue()
             self.stream_error = None
-
             self.is_streaming = True
             self.current_stream_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             self.current_text = cleaned_text
 
+            # 根据提供商启动合成
             if self.provider == 'xfyun':
                 return self._start_xfyun_stream(cleaned_text)
             elif self.provider == 'azure':
                 return self._start_azure_stream(cleaned_text)
             else:
+                logging.error(f"不支持的提供商: {self.provider}")
                 return False
 
     def _start_xfyun_stream(self, text: str) -> bool:
         """启动讯飞流式合成"""
         try:
+            # 生成WebSocket认证URL
             ws_url = assemble_ws_auth_url(
                 self.endpoint,
                 "GET",
@@ -506,6 +641,7 @@ class TTSClient:
             logging.error(f"生成WebSocket URL失败: {e}")
             return False
 
+        # WebSocket回调函数
         def on_message(ws, message):
             try:
                 message = json.loads(message)
@@ -521,6 +657,7 @@ class TTSClient:
                         with self.stream_lock:
                             self.is_streaming = False
 
+                        # 等待播放完成（如果启用了内部播放）
                         self._wait_for_playback_completion()
                         self.completion_event.set()
                         ws.close()
@@ -558,12 +695,13 @@ class TTSClient:
         def on_open(ws):
             def run(*args):
                 params = self._create_xfyun_params(text)
-                d = json.dumps(params)
+                data = json.dumps(params)
                 logging.info("正在发送文本数据到TTS服务...")
-                ws.send(d)
+                ws.send(data)
 
             thread.start_new_thread(run, ())
 
+        # 设置WebSocket
         websocket.enableTrace(False)
         self.ws = websocket.WebSocketApp(
             ws_url,
@@ -575,6 +713,7 @@ class TTSClient:
 
         logging.info("正在连接TTS WebSocket服务器...")
 
+        # 启动WebSocket线程
         self.ws_thread = threading.Thread(
             target=self.ws.run_forever,
             kwargs={"sslopt": {"cert_reqs": ssl.CERT_NONE}},
@@ -622,33 +761,34 @@ class TTSClient:
 
     def _start_azure_stream(self, text: str) -> bool:
         """启动Azure流式合成（示例实现）"""
+        logging.info(f"Azure TTS流式合成（暂未实现）: {text[:50]}...")
         # 这里需要根据Azure TTS API实现
         # 由于Azure实现较复杂，这里只提供框架
-        logging.info(f"Azure TTS流式合成: {text[:50]}...")
-        # 实现Azure特定的流式合成逻辑
         return False
 
     def _wait_for_playback_completion(self):
-        """等待音频播放完成"""
-        time.sleep(0.5)
-
-        if self.audio_stream.is_playing:
+        """等待音频播放完成（如果启用了内部播放）"""
+        if not self.disable_internal_playback and self.audio_stream.is_playing:
             logging.info("等待音频播放完成...")
-            for i in range(50):
+            for i in range(50):  # 最多等待5秒
                 if not self.audio_stream.is_playing:
                     break
                 time.sleep(0.1)
 
+        # 停止播放
         self.audio_stream.stop_playback()
 
     def _handle_audio_chunk(self, audio_data: bytes):
         """处理音频数据块"""
         try:
+            # 可选：保存音频到缓存
             if self.config.get('cache.save_audio', True):
                 self.cache_manager.save_audio(audio_data)
 
+            # 添加到音频流管理器
             self.audio_stream.add_audio_chunk(audio_data)
 
+            # 调用用户提供的回调函数
             if self.stream_callback:
                 try:
                     self.stream_callback(audio_data)
@@ -659,7 +799,15 @@ class TTSClient:
             logging.error(f"处理音频数据块时出错: {e}")
 
     def wait_for_completion(self, timeout: float = 30.0) -> bool:
-        """等待流式合成完成"""
+        """
+        等待流式合成完成
+
+        Args:
+            timeout: 超时时间（秒）
+
+        Returns:
+            bool: 是否成功完成
+        """
         success = self.completion_event.wait(timeout)
         if self.stream_error:
             logging.error(f"流式合成过程中发生错误: {self.stream_error}")
@@ -672,16 +820,21 @@ class TTSClient:
             if not self.is_streaming:
                 return
 
+            logging.info("正在停止流式合成...")
+
+            # 关闭WebSocket连接
             if self.ws:
-                logging.info("正在停止流式合成...")
                 try:
                     self.ws.close()
-                except:
-                    pass
+                except Exception as e:
+                    logging.error(f"关闭WebSocket时出错: {e}")
 
             self.is_streaming = False
 
+        # 停止音频播放
         self.audio_stream.stop_playback()
+
+        # 设置完成事件
         self.completion_event.set()
 
     def get_status(self) -> Dict[str, Any]:
@@ -689,94 +842,35 @@ class TTSClient:
         return {
             "provider": self.provider,
             "is_streaming": self.is_streaming,
-            "audio_queue_size": self.audio_stream.audio_queue.qsize(),
+            "audio_queue_size": self.audio_stream.get_queue_size(),
             "is_playing": self.audio_stream.is_playing,
             "last_error": self.stream_error,
+            "disable_internal_playback": self.disable_internal_playback,
             "config": {
                 "vcn": self.vcn if hasattr(self, 'vcn') else None,
                 "speed": self.speed if hasattr(self, 'speed') else None,
                 "volume": self.volume if hasattr(self, 'volume') else None,
                 "pitch": self.pitch if hasattr(self, 'pitch') else None
-            }
+            },
+            "audio_stream_status": self.audio_stream.get_status()
         }
 
+    def enable_internal_playback(self, enable: bool = True) -> bool:
+        """
+        启用或禁用内部音频播放
 
-def main():
-    """主函数"""
-    print("\n" + "=" * 60)
-    print("TTS 客户端")
-    print("=" * 60)
+        Args:
+            enable: 是否启用内部播放
 
-    try:
-        tts_client = TTSClient()
+        Returns:
+            bool: 操作是否成功
+        """
+        if enable and self.disable_internal_playback:
+            logging.warning("无法启用内部播放，客户端初始化时已禁用")
+            return False
 
-        while True:
-            print("\n请选择操作模式:")
-            print("1. 流式合成文本")
-            print("2. 查看状态信息")
-            print("3. 退出程序")
+        return self.audio_stream.enable_playback(enable)
 
-            try:
-                choice = input("\n请选择 (1-3): ").strip()
-            except KeyboardInterrupt:
-                print("\n检测到中断信号，退出程序...")
-                tts_client.stop_stream()
-                break
-
-            if choice == "1":
-                text = input("\n请输入要流式合成的文本: ").strip()
-                if text:
-                    print("\n开始流式合成...")
-
-                    success = tts_client.text_to_speech_stream(text, None)
-
-                    if success:
-                        print("流式合成已开始，正在播放...")
-                        print("等待合成完成（按Ctrl+C可中断）...")
-                        try:
-                            if tts_client.wait_for_completion(60):
-                                print("✓ 流式合成完成！")
-                            else:
-                                print("✗ 流式合成失败")
-                        except KeyboardInterrupt:
-                            print("\n用户中断")
-                            tts_client.stop_stream()
-                    else:
-                        print("流式合成启动失败")
-                else:
-                    print("未输入文本")
-
-            elif choice == "2":
-                status = tts_client.get_status()
-                print(f"\nTTS客户端状态:")
-                print(f"提供商: {status['provider']}")
-                print(f"正在流式合成: {'是' if status['is_streaming'] else '否'}")
-                print(f"音频队列大小: {status['audio_queue_size']}")
-                print(f"正在播放: {'是' if status['is_playing'] else '否'}")
-                if status['last_error']:
-                    print(f"最后错误: {status['last_error']}")
-
-                if status['config']['vcn']:
-                    print(f"语音模型: {status['config']['vcn']}")
-                    print(f"语速: {status['config']['speed']}")
-                    print(f"音量: {status['config']['volume']}")
-                    print(f"音高: {status['config']['pitch']}")
-
-            elif choice == "3":
-                print("退出程序...")
-                tts_client.stop_stream()
-                break
-
-            else:
-                print("无效的选择")
-
-    except ValueError as e:
-        print(f"\n配置错误: {e}")
-    except Exception as e:
-        print(f"\n程序错误: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()
+    def get_audio_queue(self):
+        """获取音频队列（供外部播放器使用）"""
+        return self.audio_stream

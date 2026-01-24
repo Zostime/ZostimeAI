@@ -5,25 +5,27 @@
 
 ## File structure
 ```
-D:\Airis\
-├── .venv\              # 根虚拟环境
-├── Files\
-│   ├── cache\          # 缓存目录
-│   │   ├── LLM\
-│   │   └── TTS\
-│   ├── config\         # 配置文件目录
-│   │   ├── .env     
-│   │   └── config.json  
-│   └── logs\           # 日志目录
-│       ├── LLM\
-│       └── TTS\
-├── LLM\
-│   └── Python\      
-│       └── llm.py     # LLM Python代码 
-├── TTS\
-│   └── Python\      
-│       └── tts.py     # TTS Python代码
-└── main.py             #主代码
+Airis/
+├─core/                 # 所有核心业务逻辑
+│   ├─llm/              # LLM模块
+│   │   ├─__init__.py
+│   │   └─client.py  
+│   ├─tts/              # TTS模块
+│   │   ├─__init__.py
+│   │   └─client.py  
+│   └─memory/           # 记忆系统
+│       ├─__init__.py
+│       ├─manager.py    
+│       ├─stm.py
+│       └─ltm.py
+├─Files/                # 数据和配置
+│   ├─cache/
+│   ├─config/
+│   ├─logs/
+│   └─storage/
+├─.venv/                # Python虚拟环境
+├─main.py               # 程序主入口
+└─requirements.txt      # 项目依赖
 ```
 ### LLM
 - Deepseek

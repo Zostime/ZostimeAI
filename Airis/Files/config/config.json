@@ -6,12 +6,6 @@
       "model": "deepseek-chat",
       "temperature": 0.7,
       "max_tokens": 4096
-    },
-    "openai": {
-      "base_url": "https://api.openai.com/v1",
-      "model": "gpt-3.5-turbo",
-      "temperature": 0.7,
-      "max_tokens": 4096
     }
   },
   "tts": {
@@ -23,30 +17,54 @@
       "volume": 50,
       "pitch": 56,
       "endpoint": "wss://cbm01.cn-huabei-1.xf-yun.com/v1/private/mcd9m97e6"
+    }
+  },
+  "memory": {
+    "enabled": true,
+    "stm": {
+      "enabled": true,
+      "capacity": 10,
+      "persistence": true,
+      "save_interval": 5,
+      "max_tokens_per_message": 500,
+      "summary_enabled": true,
+      "summary_interval": 5
     },
-    "azure": {
-      "region": "eastasia",
-      "voice": "zh-CN-XiaoxiaoNeural"
+    "ltm": {
+      "enabled": true,
+      "storage_type": "vector",
+      "embedding_model": "text-embedding-ada-002",
+      "similarity_threshold": 0.75,
+      "retrieval_top_k": 3,
+      "auto_consolidation": true,
+      "consolidation_interval": 10,
+      "knowledge_graph_enabled": true
     }
   },
   "cache": {
     "llm_dir": "Files/cache/LLM",
     "tts_dir": "Files/cache/TTS",
+    "memory_dir": "Files/cache/Memory",
     "save_responses": true,
-    "save_audio": true
+    "save_audio": true,
+    "save_memory": true
   },
   "logging": {
     "enabled": true,
     "level": "INFO",
     "llm_log_dir": "Files/logs/LLM",
     "tts_log_dir": "Files/logs/TTS",
+    "memory_log_dir": "Files/logs/Memory",
     "max_file_size_mb": 10,
     "backup_count": 5
   },
   "streaming": {
     "audio_queue_size": 200,
     "stream_chunk_size": 2048,
-    "realtime_playback": true,
-    "playback_buffer_ms": 200
+    "realtime_playback": false,
+    "playback_buffer_ms": 500,
+    "pre_buffer_duration": 0.5,
+    "min_buffer_duration": 0.3,
+    "max_wait_for_data": 10
   }
 }
