@@ -19,10 +19,10 @@ D:\Airis\
 │       └── TTS\
 ├── LLM\
 │   └── Python\      
-│       └── main.py     # LLM Python代码 
+│       └── llm.py     # LLM Python代码 
 ├── TTS\
 │   └── Python\      
-│       └── main.py     # TTS Python代码
+│       └── tts.py     # TTS Python代码
 └── main.py             #主代码
 ```
 ### LLM

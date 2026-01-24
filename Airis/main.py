@@ -1,6 +1,9 @@
 """
 Airis - LLM-TTS 流处理交互系统
 主程序入口
+支持TTS开关控制
+版本: 1.0.0
+作者: Zostime
 """
 
 import os
@@ -8,6 +11,7 @@ import sys
 import threading
 import time
 import queue
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
@@ -32,15 +36,34 @@ except ImportError as e:
 class StreamCoordinator:
     """LLM和TTS流式处理协调器"""
 
-    def __init__(self):
-        """初始化协调器"""
+    def __init__(self, config_path: str = None):
+        """
+        初始化协调器
+
+        Args:
+            config_path: 配置文件路径，默认为 Files/config/config.json
+        """
+        # 设置默认配置文件路径
+        if config_path is None:
+            config_path = project_root / "Files" / "config" / "config.json"
+
+        # 加载配置文件
+        self.config = self._load_config(config_path)
+
+        # 检查TTS是否启用
+        self.tts_enabled = self.config.get("tts", {}).get("enabled", True)
+
         # 初始化LLM客户端
         print("正在初始化LLM客户端...")
         self.llm_client = LLMClient()
 
-        # 初始化TTS客户端
-        print("正在初始化TTS客户端...")
-        self.tts_client = TTSClient()
+        # 根据配置决定是否初始化TTS客户端
+        if self.tts_enabled:
+            print("正在初始化TTS客户端...")
+            self.tts_client = TTSClient()
+        else:
+            print("TTS功能已禁用，跳过TTS客户端初始化")
+            self.tts_client = None
 
         # 流式处理状态
         self.is_processing = False
@@ -61,10 +84,37 @@ class StreamCoordinator:
             "llm_calls": 0,
             "tts_calls": 0,
             "total_chars": 0,
-            "total_audio_ms": 0
+            "total_audio_ms": 0,
+            "tts_enabled": self.tts_enabled,
+            "start_time": time.time()
         }
 
-        print("✓ 系统初始化完成")
+        print(f"✓ 系统初始化完成 (TTS: {'启用' if self.tts_enabled else '禁用'})")
+
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
+        """
+        加载配置文件
+
+        Args:
+            config_path: 配置文件路径
+
+        Returns:
+            Dict[str, Any]: 配置字典
+        """
+        try:
+            config_file = Path(config_path)
+            if not config_file.exists():
+                print(f"警告: 配置文件 {config_path} 不存在，使用默认配置")
+                return {}
+
+            with open(config_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"配置文件格式错误: {e}，使用默认配置")
+            return {}
+        except Exception as e:
+            print(f"加载配置文件失败: {e}，使用默认配置")
+            return {}
 
     def process_user_input(self, user_input: str) -> bool:
         """
@@ -85,8 +135,9 @@ class StreamCoordinator:
                 print("输入为空，请重新输入")
                 return False
 
-            print(f"\n[处理开始] 输入: {user_input[:50]}..." if len(
-                user_input) > 50 else f"\n[处理开始] 输入: {user_input}")
+            input_preview = user_input[:50] + "..." if len(user_input) > 50 else user_input
+            print(f"\n[处理开始] 输入: {input_preview}")
+            print(f"[模式] TTS: {'启用' if self.tts_enabled else '禁用'}")
 
             # 重置状态
             self.is_processing = True
@@ -114,7 +165,7 @@ class StreamCoordinator:
         try:
             # 步骤1: 构建LLM消息
             messages = [
-                {"role": "system", "content": "你叫Airis,创作者是Zostime,请尽量简短地回答用户的提问."},
+                {"role": "system", "content": "你叫Airis(Ai+Iris),创作者是Zostime,请尽量简短地回答用户的提问."},
                 {"role": "user", "content": user_input}
             ]
 
@@ -144,9 +195,6 @@ class StreamCoordinator:
                             except Exception as e:
                                 print(f"LLM回调错误: {e}")
 
-                        # 可选：实时打印（不推荐，因为LLM模块已打印）
-                        # print(chunk, end="", flush=True)
-
                 # 获取最终结果
                 final_result = next(stream_gen)
                 if isinstance(final_result, dict):
@@ -169,36 +217,46 @@ class StreamCoordinator:
             self.stats["total_chars"] += len(llm_response)
 
             print(f"\n[LLM] 生成完成 (长度: {len(llm_response)}字符)")
-            print(f"[TTS] 开始语音合成...")
 
-            # 步骤3: TTS流式合成
-            # 准备TTS回调
-            def tts_callback(audio_data: bytes):
-                """TTS音频数据回调"""
-                if self.on_tts_audio:
-                    try:
-                        self.on_tts_audio(audio_data)
-                    except Exception as e:
-                        print(f"TTS回调错误: {e}")
+            # 步骤3: 根据配置决定是否进行TTS合成
+            if self.tts_enabled and self.tts_client:
+                print(f"[TTS] 开始语音合成...")
 
-            # 启动TTS流式合成
-            success = self.tts_client.text_to_speech_stream(llm_response, tts_callback)
+                # 准备TTS回调
+                def tts_callback(audio_data: bytes):
+                    """TTS音频数据回调"""
+                    if self.on_tts_audio:
+                        try:
+                            self.on_tts_audio(audio_data)
+                        except Exception as e:
+                            print(f"TTS回调错误: {e}")
 
-            if not success:
-                print("TTS流式合成启动失败")
-                self._finish_processing(success=False)
-                return
+                # 启动TTS流式合成
+                success = self.tts_client.text_to_speech_stream(llm_response, tts_callback)
 
-            # 等待TTS合成完成
-            print("[TTS] 正在合成语音...")
+                if not success:
+                    print("TTS流式合成启动失败")
+                    self._finish_processing(success=False)
+                    return
 
-            if self.tts_client.wait_for_completion(60):  # 60秒超时
-                self.stats["tts_calls"] += 1
-                print("✓ TTS合成完成")
-                self._finish_processing(success=True, response=llm_response)
+                # 等待TTS合成完成
+                print("[TTS] 正在合成语音...")
+
+                if self.tts_client.wait_for_completion(60):  # 60秒超时
+                    self.stats["tts_calls"] += 1
+                    print("✓ TTS合成完成")
+                    self._finish_processing(success=True, response=llm_response)
+                else:
+                    print("✗ TTS合成超时")
+                    self._finish_processing(success=False)
             else:
-                print("✗ TTS合成超时")
-                self._finish_processing(success=False)
+                # TTS禁用，直接完成处理
+                print("[提示] TTS功能已禁用，跳过语音合成")
+                print(f"\n{'='*50}")
+                print("[LLM回答]:")
+                print(llm_response)
+                print(f"{'='*50}\n")
+                self._finish_processing(success=True, response=llm_response)
 
         except Exception as e:
             print(f"处理链错误: {e}")
@@ -212,8 +270,8 @@ class StreamCoordinator:
             self.is_processing = False
 
             if success and response:
-                print(f"\n[处理完成] 响应: {response[:100]}..." if len(
-                    response) > 100 else f"\n[处理完成] 响应: {response}")
+                response_preview = response[:100] + "..." if len(response) > 100 else response
+                print(f"\n[处理完成] 响应预览: {response_preview}")
 
             # 调用完成回调
             if self.on_complete:
@@ -233,8 +291,8 @@ class StreamCoordinator:
 
             print("\n[正在停止处理...]")
 
-            # 停止TTS合成
-            if hasattr(self, 'tts_client') and self.tts_client:
+            # 停止TTS合成（如果启用）
+            if self.tts_enabled and hasattr(self, 'tts_client') and self.tts_client:
                 self.tts_client.stop_stream()
 
             # 重置状态
@@ -248,10 +306,14 @@ class StreamCoordinator:
         status = {
             "is_processing": self.is_processing,
             "current_task_id": self.current_task_id,
+            "tts_enabled": self.tts_enabled,
             "llm_status": None,
             "tts_status": None,
             "stats": self.stats.copy()
         }
+
+        # 添加运行时间
+        status["stats"]["uptime"] = time.time() - self.stats["start_time"]
 
         # 获取LLM状态
         if hasattr(self, 'llm_client'):
@@ -260,8 +322,8 @@ class StreamCoordinator:
                 "model": getattr(self.llm_client, 'model', 'unknown')
             }
 
-        # 获取TTS状态
-        if hasattr(self, 'tts_client') and self.tts_client:
+        # 获取TTS状态（如果启用）
+        if self.tts_enabled and hasattr(self, 'tts_client') and self.tts_client:
             try:
                 tts_status = self.tts_client.get_status()
                 status["tts_status"] = {
@@ -271,8 +333,55 @@ class StreamCoordinator:
                 }
             except:
                 status["tts_status"] = {"error": "获取状态失败"}
+        elif not self.tts_enabled:
+            status["tts_status"] = {"disabled": True}
 
         return status
+
+    def toggle_tts(self, enable: bool = None) -> bool:
+        """
+        切换TTS功能状态
+
+        Args:
+            enable: True启用，False禁用，None切换
+
+        Returns:
+            bool: 新的TTS状态
+        """
+        if enable is None:
+            # 切换状态
+            new_state = not self.tts_enabled
+        else:
+            new_state = bool(enable)
+
+        if new_state == self.tts_enabled:
+            print(f"TTS已经是{'启用' if new_state else '禁用'}状态")
+            return self.tts_enabled
+
+        # 更新状态
+        self.tts_enabled = new_state
+        self.stats["tts_enabled"] = new_state
+
+        # 如果从禁用切换到启用，需要初始化TTS客户端
+        if new_state and not hasattr(self, 'tts_client'):
+            try:
+                print("正在初始化TTS客户端...")
+                self.tts_client = TTSClient()
+                print("✓ TTS客户端初始化完成")
+            except Exception as e:
+                print(f"TTS客户端初始化失败: {e}")
+                self.tts_enabled = False
+                return False
+        # 如果从启用切换到禁用，可以释放TTS客户端资源
+        elif not new_state and hasattr(self, 'tts_client'):
+            print("正在释放TTS客户端资源...")
+            # 这里可以添加释放资源的代码
+            # self.tts_client.cleanup()
+            self.tts_client = None
+            print("✓ TTS客户端资源已释放")
+
+        print(f"✓ TTS功能已{'启用' if new_state else '禁用'}")
+        return self.tts_enabled
 
     def register_callbacks(self,
                            llm_chunk_callback=None,
@@ -291,17 +400,28 @@ class StreamCoordinator:
         self.on_complete = complete_callback
 
 
-def main():
-    """主函数 - 交互式LLM-TTS系统"""
+def clear_screen():
+    """清屏函数"""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+def display_banner():
+    """显示程序横幅"""
     print("=" * 70)
     print("Airis - LLM-TTS 流处理交互系统")
     print("=" * 70)
     print("功能:")
     print("1. 用户输入文本")
     print("2. LLM流式生成回答")
-    print("3. TTS流式合成语音")
+    print("3. TTS流式合成语音 (可配置开关)")
     print("4. 实时播放语音")
     print("=" * 70)
+
+
+def main():
+    """主函数 - 交互式LLM-TTS系统"""
+    clear_screen()
+    display_banner()
 
     try:
         # 初始化协调器
@@ -323,6 +443,8 @@ def main():
             if success:
                 print(f"\n✓ 任务 {task_id} 完成")
                 print(f"  响应长度: {len(response)} 字符")
+                if not coordinator.tts_enabled:
+                    print(f"  模式: 纯文本 (TTS已禁用)")
             else:
                 print(f"\n✗ 任务 {task_id} 失败")
 
@@ -339,10 +461,12 @@ def main():
             print("1. 输入文本进行对话")
             print("2. 查看系统状态")
             print("3. 停止当前处理")
-            print("4. 退出程序")
+            print("4. 切换TTS功能 (当前: " + ("启用" if coordinator.tts_enabled else "禁用") + ")")
+            print("5. 清屏")
+            print("6. 退出程序")
 
             try:
-                choice = input("\n请选择 (1-4): ").strip()
+                choice = input("\n请选择 (1-6): ").strip()
             except (KeyboardInterrupt, EOFError):
                 print("\n\n检测到中断信号，正在退出...")
                 coordinator.stop_processing()
@@ -351,7 +475,8 @@ def main():
             if choice == "1":
                 # 获取用户输入
                 try:
-                    user_input = input("\n请输入您的消息 (按Ctrl+C取消): ").strip()
+                    print("\n请输入您的消息 (输入 'exit' 返回主菜单，按Ctrl+C取消):")
+                    user_input = input("> ").strip()
                 except (KeyboardInterrupt, EOFError):
                     print("\n输入已取消")
                     continue
@@ -360,16 +485,24 @@ def main():
                     print("输入不能为空")
                     continue
 
+                if user_input.lower() == 'exit':
+                    print("返回主菜单")
+                    continue
+
+                # 显示当前模式
+                mode = "语音模式" if coordinator.tts_enabled else "纯文本模式"
+                print(f"[模式] {mode}")
+
                 # 处理用户输入
                 success = coordinator.process_user_input(user_input)
 
                 if success:
                     print("处理已启动，请等待...")
 
-                    # 等待处理完成（可选，可以异步）
-                    # 这里简单等待几秒，实际应用中应该是异步的
+                    # 等待处理完成
                     max_wait = 120  # 最大等待2分钟
                     start_time = time.time()
+                    dot_count = 0
 
                     while coordinator.is_processing:
                         time.sleep(0.5)
@@ -381,9 +514,12 @@ def main():
                             coordinator.stop_processing()
                             break
 
-                        # 每5秒显示一次状态
-                        if int(elapsed) % 5 == 0 and int(elapsed) > 0:
+                        # 每2秒显示一次进度
+                        if int(elapsed) % 2 == 0 and int(elapsed) > 0:
                             print(".", end="", flush=True)
+                            dot_count += 1
+                            if dot_count % 40 == 0:  # 每40个点换行
+                                print()
 
                 else:
                     print("处理启动失败")
@@ -399,6 +535,7 @@ def main():
                 print(f"正在处理: {'是' if status['is_processing'] else '否'}")
                 if status['current_task_id']:
                     print(f"当前任务: {status['current_task_id']}")
+                print(f"TTS功能: {'启用' if status['tts_enabled'] else '禁用'}")
 
                 if status['llm_status']:
                     print(f"\nLLM状态:")
@@ -406,15 +543,19 @@ def main():
                     print(f"  模型: {status['llm_status']['model']}")
 
                 if status['tts_status']:
-                    print(f"\nTTS状态:")
-                    print(f"  提供商: {status['tts_status']['provider']}")
-                    print(f"  正在流式合成: {'是' if status['tts_status'].get('is_streaming') else '否'}")
-                    print(f"  正在播放: {'是' if status['tts_status'].get('is_playing') else '否'}")
+                    if status['tts_status'].get('disabled'):
+                        print(f"\nTTS状态: 已禁用")
+                    else:
+                        print(f"\nTTS状态:")
+                        print(f"  提供商: {status['tts_status'].get('provider', 'unknown')}")
+                        print(f"  正在流式合成: {'是' if status['tts_status'].get('is_streaming') else '否'}")
+                        print(f"  正在播放: {'是' if status['tts_status'].get('is_playing') else '否'}")
 
                 print(f"\n统计信息:")
                 print(f"  LLM调用次数: {status['stats']['llm_calls']}")
                 print(f"  TTS调用次数: {status['stats']['tts_calls']}")
                 print(f"  总处理字符数: {status['stats']['total_chars']}")
+                print(f"  系统运行时间: {int(status['stats']['uptime'])}秒")
                 print("=" * 50)
 
             elif choice == "3":
@@ -425,9 +566,21 @@ def main():
                     print("当前没有处理任务")
 
             elif choice == "4":
+                # 切换TTS功能
+                new_state = coordinator.toggle_tts()
+                print(f"✓ TTS功能已{'启用' if new_state else '禁用'}")
+
+            elif choice == "5":
+                # 清屏
+                clear_screen()
+                display_banner()
+
+            elif choice == "6":
                 # 退出程序
                 print("\n正在退出程序...")
                 coordinator.stop_processing()
+                time.sleep(1)  # 给清理操作一点时间
+                clear_screen()
                 break
 
             else:
@@ -437,6 +590,7 @@ def main():
         print(f"\n程序发生错误: {e}")
         import traceback
         traceback.print_exc()
+        input("\n按Enter键退出...")
 
 if __name__ == "__main__":
     main()

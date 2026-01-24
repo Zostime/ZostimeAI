@@ -15,6 +15,7 @@
     }
   },
   "tts": {
+    "enabled": true,
     "provider": "xfyun",
     "xfyun": {
       "vcn": "x6_lingyuyan_pro",
