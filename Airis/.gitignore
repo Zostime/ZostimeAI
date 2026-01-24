@@ -129,8 +129,6 @@ Icon
 
 # API密钥和配置（示例文件应保留）
 Files/config/*.env
-Files/config/config.json
-Files/config/memory_config.json
 Files/config/*.key
 Files/config/*.secret
 Files/config/*.pem
@@ -138,8 +136,8 @@ Files/config/*.crt
 
 # 但保留示例配置文件
 !Files/config/.env.example
-!Files/config/config.example.json
-!Files/config/memory_config.example.json
+!Files/config/config.json
+!Files/config/memory_config.json
 
 # ================================
 # 缓存和临时文件

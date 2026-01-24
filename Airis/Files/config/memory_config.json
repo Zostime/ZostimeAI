@@ -1,0 +1,55 @@
+{
+  "memory_system": {
+    "version": "1.0.0",
+    "description": "Airis Memory System Configuration"
+  },
+  "short_term_memory": {
+    "context_window": 10,
+    "token_limit": 4000,
+    "summary_strategy": "adaptive",
+    "compression_ratio": 0.3,
+    "forgetting_curve": {
+      "enabled": true,
+      "decay_rate": 0.1,
+      "rehearsal_boost": 0.2
+    },
+    "importance_scoring": {
+      "enabled": true,
+      "factors": ["user_feedback", "repetition", "emotional_content", "key_phrases"]
+    }
+  },
+  "long_term_memory": {
+    "vector_database": {
+      "provider": "chroma",
+      "collection_name": "airis_memory",
+      "distance_metric": "cosine",
+      "dimension": 1536
+    },
+    "consolidation": {
+      "enabled": true,
+      "trigger_conditions": ["importance_threshold", "temporal_proximity", "semantic_clustering"],
+      "consolidation_model": "auto"
+    },
+    "retrieval": {
+      "hybrid_search": true,
+      "semantic_weight": 0.7,
+      "temporal_weight": 0.3,
+      "recency_boost": true,
+      "relevance_threshold": 0.65
+    }
+  },
+  "embeddings": {
+    "model": "text-embedding-ada-002",
+    "dimensions": 1536,
+    "batch_size": 32,
+    "cache_enabled": true,
+    "cache_size": 1000
+  },
+  "knowledge_graph": {
+    "enabled": true,
+    "auto_extract": true,
+    "extract_patterns": ["entities", "relationships", "events", "facts"],
+    "inference_enabled": true,
+    "inference_depth": 2
+  }
+}
