@@ -6,6 +6,10 @@
     "frequency_penalty": 0.0,
     "presence_penalty": 0.0
   },
+  "tts": {
+    "voice": "af_heart",
+    "language": "zh"
+  },
   "stt": {
     "model": "medium",
     "models_dir": "Files/models/whisper",

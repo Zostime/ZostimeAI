@@ -40,15 +40,16 @@ class TTSClient:
         self.config = ConfigManager()
         self.logger = LogManager("tts")
         self.cache = CacheManager(self.config,"tts")
-        self.pipeline = self._init_client()
 
         # 常见voice列表见 https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
-        self.voice = 'af_heart'
+        self.voice = self.config.get_json("tts.voice")
+        self.language = self.config.get_json("tts.language")
+        self.pipeline = self._init_client()
 
     def _init_client(self):
         os.environ["HF_TOKEN"] = self.config.get_env("HF_TOKEN")
         # 指定基础语言
-        return KPipeline(lang_code='zh', repo_id="hexgrad/Kokoro-82M")
+        return KPipeline(lang_code=self.language, repo_id="hexgrad/Kokoro-82M")
 
     def stream_tts(self, text: str):
         audio_queue = queue.Queue()
@@ -63,7 +64,7 @@ class TTSClient:
                         audio_queue.task_done()
                     except queue.Empty:
                         continue
-                # 退出前清空剩余任务
+                #退出前清空剩余任务
                 while not audio_queue.empty():
                     try:
                         audio_data = audio_queue.get_nowait()
