@@ -1,0 +1,195 @@
+import whisper
+import pyaudio
+import numpy as np
+from pathlib import Path
+import os
+from dotenv import load_dotenv
+import json
+from typing import Any, Optional
+
+# ===============================
+# 配置管理器
+# ===============================
+class ConfigManager:
+    def __init__(self):
+        """初始化配置管理器"""
+        self.base_dir = Path(__file__).parent.parent.parent
+        self.config_dir = self.base_dir / "Files" / "config"
+        self.json_config = {}
+        self._load_config()
+
+    def _load_config(self):
+        """加载.env和config.json"""
+        env_file = self.config_dir / ".env"
+        json_file = self.config_dir / "config.json"
+        #加载.env
+        if not env_file.exists():
+            raise ValueError(f"未找到.env文件,请创建:{env_file}")
+        load_dotenv(env_file)
+
+        required_keys = []
+        missing_keys = []
+        for key in required_keys:
+            if not os.getenv(key):
+                missing_keys.append(key)
+        if missing_keys:
+            raise ValueError(f"配置项:{', '.join(missing_keys)}不存在")
+
+        #加载config.json
+        if not json_file.exists():
+            raise ValueError(f"未找到config.json文件,请创建:{json_file}")
+        try:
+            with open(json_file, encoding="utf-8") as f:
+                self.json_config = json.load(f)
+        except Exception as e:
+            raise ValueError(f"config.json错误{e}")
+
+    @staticmethod
+    def get_env(key: str, default: str = None) -> str:
+        """从.env获取配置"""
+        value = os.getenv(key, default)
+        return value
+
+    def get_json(self, key_path: str, default: Any = None) -> Any:
+        """从JSON配置获取值"""
+        if not key_path:
+            return self.json_config
+
+        parts = key_path.split('.')
+        value = self.json_config
+
+        for part in parts:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return default
+        return value
+
+    def get_path(self, key_path: str) -> Path:
+        """获取路径配置，转换为绝对路径"""
+        path_str = self.get_json(key_path,"")
+
+        if not path_str:
+            raise ValueError(f"未找到路径配置:{key_path}")
+
+        path = self.base_dir / path_str
+
+        return path
+
+# ===============================
+# STT客户端
+# ===============================
+class STTClient:
+    def __init__(self):
+        self.config = ConfigManager()
+        self.model = self._init_client()
+
+        # 音频参数（从配置读取，提供默认值）
+        self.sample_rate = self.config.get_json("stt.sample_rate", 16000)
+        self.channels = self.config.get_json("stt.channels", 1)
+        self.chunk_size = self.config.get_json("stt.chunk_size", 1024)
+        self.format = pyaudio.paInt16
+        self.silence_threshold = self.config.get_json("stt.silence_threshold", 500)   # RMS 能量阈值
+        self.silence_timeout = self.config.get_json("stt.silence_timeout", 1.0)       # 静音超时（秒）
+
+        #PyAudio实例
+        self.p = pyaudio.PyAudio()
+
+    def _init_client(self) -> whisper.Whisper:
+        model_name = self.config.get_json("stt.model")
+        models_dir = self.config.get_path("stt.models_dir")
+        try:
+            model=whisper.load_model(model_name, download_root=str(models_dir))
+        except Exception as e:
+            raise ValueError(f"whisper初始化错误:{e}")
+        return model
+
+    def _is_silence(self, data: bytes) -> bool:
+        """基于RMS能量的静音检测"""
+        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+        rms = np.sqrt(np.mean(samples ** 2))
+        return rms < self.silence_threshold
+
+    def _record_until_silence(self) -> Optional[np.ndarray]:
+        """
+        录制音频：先等待声音出现，然后录音直到连续静音超过 silence_timeout 秒。
+        返回归一化的 float32 音频数组，若未捕获到有效语音则返回 None。
+        """
+        stream = self.p.open(
+            format=self.format,
+            channels=self.channels,
+            rate=self.sample_rate,
+            input=True,
+            frames_per_buffer=self.chunk_size
+        )
+
+        print("\r等待语音输入...",end='')
+
+        #等待语音开始
+        while True:
+            try:
+                data = stream.read(self.chunk_size, exception_on_overflow=False)
+            except IOError:
+                continue
+            if not self._is_silence(data):
+                break
+
+        print("\r开始录音...",end='')
+
+        #录音直到连续静音超时
+        frames = []
+        silent_chunks = 0
+        # 静音阈值对应的块数
+        silence_limit = int((self.silence_timeout * self.sample_rate) / self.chunk_size)
+
+        while True:
+            try:
+                data = stream.read(self.chunk_size, exception_on_overflow=False)
+            except IOError:
+                continue
+            frames.append(data)
+
+            if self._is_silence(data):
+                silent_chunks += 1
+            else:
+                silent_chunks = 0
+
+            if silent_chunks > silence_limit:
+                print(f"\r检测到{self.silence_timeout}秒静音,录音结束.",end='')
+                break
+
+        stream.stop_stream()
+        stream.close()
+
+        if not frames:
+            return None
+
+        #将字节数据转为归一化的float32数组
+        audio_bytes = b''.join(frames)
+        audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+        audio_float32 = audio_int16.astype(np.float32) / 32768.0
+        return audio_float32
+
+    def listen_and_transcribe(self) -> Optional[str]:
+        """
+        主入口:录音->转写->返回文本。
+        若未检测到有效语音或转写失败则返回 None。
+        """
+        audio = self._record_until_silence()
+        if audio is None or len(audio) == 0:
+            print("\r未捕获到有效语音",end='')
+            return None
+
+        print("\r正在转写...",end='')
+        # 直接传入numpy数组
+        result = self.model.transcribe(audio, fp16=False, language="zh")    #type:ignore
+        text = result["text"].strip()
+        if text:
+            return text
+        else:
+            return None
+
+    def __del__(self):
+        """释放 PyAudio 资源"""
+        if hasattr(self, 'p'):
+            self.p.terminate()

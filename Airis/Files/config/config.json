@@ -1,0 +1,28 @@
+{
+  "llm": {
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "top_p": 1.0,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0
+  },
+  "stt": {
+    "model": "medium",
+    "models_dir": "Files/models/whisper",
+    "sample_rate": 16000,
+    "channels": 1,
+    "chunk_size": 1024,
+    "silence_threshold": 500,
+    "silence_timeout": 1.0
+  },
+  "logging": {
+    "enabled": true,
+    "level": "INFO",
+    "llm_dir": "Files/logs/llm",
+    "max_file_size_mb": 10,
+    "backup_count": 5
+  },
+  "cache": {
+    "llm_dir": "Files/cache/llm"
+  }
+}
