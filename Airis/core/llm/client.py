@@ -144,6 +144,9 @@ class LogManager:
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
+        logging.info(f"{self.service_name}日志初始化完成")
+        logging.info(f"日志级别:{log_level_str}")
+
 # ===============================
 # 缓存管理器
 # ===============================

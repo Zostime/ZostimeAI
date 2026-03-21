@@ -19,10 +19,12 @@
     "enabled": true,
     "level": "INFO",
     "llm_dir": "Files/logs/llm",
+    "tts_dir": "Files/logs/tts",
     "max_file_size_mb": 10,
     "backup_count": 5
   },
   "cache": {
-    "llm_dir": "Files/cache/llm"
+    "llm_dir": "Files/cache/llm",
+    "tts_dir": "Files/cache/tts"
   }
 }

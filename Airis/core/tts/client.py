@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 import json
 from typing import Any
+import logging
+from logging import handlers
+import sys
 
 # ===============================
 # 配置管理器
@@ -26,7 +29,7 @@ class ConfigManager:
             raise ValueError(f"未找到.env文件,请创建:{env_file}")
         load_dotenv(env_file)
 
-        required_keys = ['HF_TOKEN']
+        required_keys = []
         missing_keys = []
         for key in required_keys:
             if not os.getenv(key):
@@ -43,7 +46,8 @@ class ConfigManager:
         except Exception as e:
             raise ValueError(f"config.json错误{e}")
 
-    def get_env(self, key: str, default: str = None) -> str:
+    @staticmethod
+    def get_env(key: str, default: str = None) -> str:
         """从.env获取配置"""
         value = os.getenv(key, default)
         return value
@@ -63,18 +67,114 @@ class ConfigManager:
                 return default
         return value
 
+    def get_path(self, key_path: str) -> Path:
+        """获取路径配置，转换为绝对路径"""
+        path_str = self.get_json(key_path,"")
+
+        if not path_str:
+            raise ValueError(f"未找到路径配置:{key_path}")
+
+        path = self.base_dir / path_str
+
+        return path
+
+# ===============================
+# 日志管理器
+# ===============================
+class LogManager:
+    def __init__(self, config: ConfigManager, service_name: str):
+        """初始化日志管理器
+
+        Args:
+            config: 配置管理器实例
+            service_name: 服务名称，用于日志文件命名
+        """
+        self.config = config
+        self.service_name = service_name
+        self.log_dir = None
+        self._setup_logging()
+
+    def _setup_logging(self):
+        """设置日志系统"""
+        # 获取日志配置
+        log_level_str = self.config.get_json('logging.level', 'INFO').upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+
+        # 设置日志目录
+        log_dir = self.config.get_path(
+            f"logging.{self.service_name}_dir",
+        )
+        # 创建日志目录
+        log_dir.mkdir(exist_ok=True)
+
+        #配置根日志记录器
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+
+        #清除现有处理器
+        root_logger.handlers.clear()
+
+        #创建格式化器
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+
+        #控制台处理器
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+
+        #文件处理器(按大小轮转)
+        log_file = log_dir / f"{self.service_name.lower()}.log"
+        max_size_mb = int(self.config.get_json('logging.max_file_size_mb', 10))
+        backup_count = int(self.config.get_json('logging.backup_count', 5))
+
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=max_size_mb * 1024 * 1024,
+            backupCount=backup_count,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+        logging.info(f"{self.service_name}日志初始化完成")
+        logging.info(f"日志级别:{log_level_str}")
+
 # ===============================
 # 缓存管理器
 # ===============================
 class CacheManager:
-    def __init__(self):
-        self.base_dir = Path(__file__).parent.parent.parent
-        self.cache_dir = self.base_dir / "Files" / "cache" / "tts"
+    def __init__(self, config: ConfigManager, service_name: str):
+        """初始化缓存管理器
+        Args:
+            config: 配置管理器实例
+            service_name: 服务名称,用于缓存目录命名
+        """
+        self.config = config
+        self.service_name = service_name
+        self.cache_dir = self._setup_cache_dir()
+
+    def _setup_cache_dir(self):
+        try:
+            cache_dir = self.config.get_path(
+                f"cache.{self.service_name}_dir"
+            )
+            # 创建缓存目录
+            cache_dir.mkdir(exist_ok=True)
+            return cache_dir
+
+        except Exception as e:
+            raise ValueError(f"设置缓存目录失败:{e}")
+
 
 class TTSClient:
     def __init__(self):
         self.config = ConfigManager()
-        self.cache = CacheManager()
+        self.cache = CacheManager(self.config,"tts")
         os.environ["HF_TOKEN"]=self.config.get_env("HF_TOKEN")
         # 指定基础语言
         self.pipeline = KPipeline(lang_code='zh')
