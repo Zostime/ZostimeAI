@@ -20,11 +20,13 @@
     "level": "INFO",
     "llm_dir": "Files/logs/llm",
     "tts_dir": "Files/logs/tts",
+    "stt_dir": "Files/logs/stt",
     "max_file_size_mb": 10,
     "backup_count": 5
   },
   "cache": {
     "llm_dir": "Files/cache/llm",
-    "tts_dir": "Files/cache/tts"
+    "tts_dir": "Files/cache/tts",
+    "stt_dir": "Files/cache/stt"
   }
 }

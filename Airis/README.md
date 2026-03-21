@@ -7,6 +7,10 @@
 ```
 Airis/
 ├─core/                 # Core
+│   ├─common/           # Public module
+│   │  ├─__init__.py    
+│   │  ├─config.py      
+│   │  └─logger.py      
 │   ├─llm/              # LLM module
 │   │   ├─__init__.py
 │   │   └─client.py  
@@ -16,7 +20,7 @@ Airis/
 │   ├─stt/              # STT module
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   └─memory/           # Memory system
+│   └─memory/           # Memory System
 │       ├─__init__.py
 │       ├─manager.py    
 │       ├─stm.py
