@@ -7,6 +7,7 @@
 ```
 Airis/
 ├─core/                 # Core
+│   ├─__init__.py  
 │   ├─common/           # Public module
 │   │  ├─__init__.py    
 │   │  ├─config.py      
@@ -17,14 +18,9 @@ Airis/
 │   ├─tts/              # TTS module
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   ├─stt/              # STT module
-│   │   ├─__init__.py
-│   │   └─client.py  
-│   └─memory/           # Memory System
+│   └─stt/              # STT module
 │       ├─__init__.py
-│       ├─manager.py    
-│       ├─stm.py
-│       └─ltm.py
+│       └─client.py  
 ├─Files/                # Data and config
 │   ├─models/           # Models
 │   ├─cache/            # Cache
