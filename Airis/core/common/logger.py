@@ -8,16 +8,27 @@ import sys
 from .config import ConfigManager    #配置管理器
 
 class LogManager:
+    _instances = {}  # 缓存已创建的实例
+
+    def __new__(cls, service_name: str):
+        if service_name not in cls._instances:
+            instance = super().__new__(cls)
+            instance._initialized = False
+            cls._instances[service_name] = instance
+        return cls._instances[service_name]
+
     def __init__(self, service_name: str):
         """初始化日志管理器
 
         Args:
             service_name: 服务名称，用于日志文件命名
         """
-        self.config = ConfigManager()
+        if getattr(self, '_initialized', False):
+            return
         self.service_name = service_name
-        self.log_dir = None
+        self.config = ConfigManager()
         self._setup_logging()
+        self._initialized = True
 
     def _setup_logging(self):
         """设置日志系统"""
@@ -30,14 +41,15 @@ class LogManager:
             f"logging.{self.service_name}_dir",
         )
         # 创建日志目录
-        log_dir.mkdir(exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
 
-        #配置根日志记录器
-        root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
+        # 创建独立的记录器
+        logger = logging.getLogger(self.service_name)
+        logger.setLevel(log_level)
 
-        #清除现有处理器
-        root_logger.handlers.clear()
+        # 清除该记录器已有的处理器
+        if logger.handlers:
+            logger.handlers.clear()
 
         #创建格式化器
         formatter = logging.Formatter(
@@ -49,7 +61,7 @@ class LogManager:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
+        logger.addHandler(console_handler)
 
         #文件处理器(按大小轮转)
         log_file = log_dir / f"{self.service_name.lower()}.log"
@@ -64,7 +76,13 @@ class LogManager:
         )
         file_handler.setLevel(log_level)
         file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+        logger.addHandler(file_handler)
 
-        logging.info(f"{self.service_name}日志初始化完成")
-        logging.info(f"日志级别:{log_level_str}")
+        self.logger = logger
+
+        self.logger.info(f"{self.service_name}日志初始化完成")
+        self.logger.info(f"日志级别:{log_level_str}")
+
+    def get_logger(self):
+        """返回配置好的日志记录器"""
+        return self.logger

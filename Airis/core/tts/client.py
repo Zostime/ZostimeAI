@@ -38,7 +38,8 @@ class CacheManager:
 class TTSClient:
     def __init__(self):
         self.config = ConfigManager()
-        self.logger = LogManager("tts")
+        self.log_manager = LogManager("tts")
+        self.logger = self.log_manager.get_logger()
         self.cache = CacheManager(self.config,"tts")
 
         # 常见voice列表见 https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md

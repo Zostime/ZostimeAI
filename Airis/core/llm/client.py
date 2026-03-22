@@ -3,7 +3,9 @@
 """
 from datetime import datetime
 import openai
-from typing import Any,Generator,Dict,List
+from typing import Any,Generator,Dict,List,Optional
+from pathlib import Path
+import json
 
 from ..common.config import ConfigManager   #配置管理器
 from ..common.logger import LogManager      #日志管理器
@@ -11,18 +13,19 @@ from ..common.logger import LogManager      #日志管理器
 # ===============================
 # 缓存管理器
 # ===============================
-class CacheClient:
-    def __init__(self, config: ConfigManager, service_name: str):
+class CacheManager:
+    def __init__(self, service_name: str):
         """初始化缓存管理器
 
         Args:
-            config: 配置管理器实例
             service_name: 服务名称,用于缓存目录命名
         """
-        self.config = config
+        self.config = ConfigManager()
+        self.log_manager = LogManager("llm")
+        self.logger = self.log_manager.get_logger()
         self.service_name = service_name
         self.cache_dir = self._setup_cache_dir()
-    def _setup_cache_dir(self):
+    def _setup_cache_dir(self) -> Path:
         try:
             cache_dir = self.config.get_path(
                 f"cache.{self.service_name}_dir"
@@ -30,15 +33,55 @@ class CacheClient:
             #创建缓存目录
             cache_dir.mkdir(exist_ok=True)
             #创建子目录
-            sub_dirs = ['conversations', 'messages']
+            sub_dirs = ['conversations']
             for sub_dir in sub_dirs:
                 (cache_dir / sub_dir).mkdir(exist_ok=True)
 
+            self.logger.info(f"{self.service_name}缓存目录:{cache_dir}")
             return cache_dir
 
         except Exception as e:
-            raise ValueError(f"设置缓存目录失败:{e}")
+            self.logger.error(f"设置缓存目录失败:{e}")
+            raise
 
+    def save_response(
+            self,
+            response_data: Dict[str, Any],
+    ) -> Optional[Path]:
+        """保存响应到文件
+        Args:
+            response_data: 响应数据字典
+        Returns:
+            Optional[Path]: 保存的文件路径，失败返回None
+        """
+        try:
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            filename = f"{timestamp}.json"
+            subdir = 'conversations'
+
+            # 创建文件路径
+            filepath = self.cache_dir / subdir / filename
+
+            # 添加元数据
+            response_data['_metadata'] = {
+                'saved_at': datetime.now().isoformat(),
+                'filepath': str(filepath)
+            }
+
+            # 保存到文件
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(response_data, f, ensure_ascii=False, indent=2)
+
+            print()
+            self.logger.info(f"响应已保存:{filepath}")
+            return filepath
+
+        except Exception as e:
+            print()
+            self.logger.error(f"保存响应失败:{e}")
+            return None
 
 # ===============================
 # LLM客户端
@@ -47,7 +90,9 @@ class LLMClient:
     def __init__(self):
         """初始化LLMClient"""
         self.config=ConfigManager()
-        self.logger=LogManager("llm")
+        self.log_manager=LogManager("llm")
+        self.logger=self.log_manager.get_logger()
+        self.cache=CacheManager("llm")
 
         self.client = self._init_client()
         self.model = self.config.get_env("LLM_MODEL")
@@ -151,6 +196,8 @@ class LLMClient:
                     'total_tokens': tokens_used.total_tokens if tokens_used else 0
                 }
             }
+
+            self.cache.save_response(response_data)
 
             # 返回最终结果
             return {
