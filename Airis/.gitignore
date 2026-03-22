@@ -14,6 +14,9 @@ Files/models/*
 Files/config/.env
 !Files/config/.env.example
 
+#memory
+Files/memories/*
+
 #cache
 Files/cache/*
 
