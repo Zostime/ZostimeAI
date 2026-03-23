@@ -14,6 +14,10 @@
   "stt": {
     "model": "medium",
     "models_dir": "Files/models/whisper",
+    "prompt": "Zostime",
+    "temperature": 0,
+    "best_of": 1,
+    "beam_size": 5,
     "sample_rate": 16000,
     "channels": 1,
     "chunk_size": 1024,

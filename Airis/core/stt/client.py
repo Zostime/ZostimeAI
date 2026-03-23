@@ -24,6 +24,10 @@ class STTClient:
         self.silence_threshold = self.config.get_json("stt.silence_threshold", 500)   # RMS 能量阈值
         self.silence_timeout = self.config.get_json("stt.silence_timeout", 1.0)       # 静音超时（秒）
 
+        self.prompt=self.config.get_json("stt.prompt")
+        self.temperature = self.config.get_json("stt.temperature")
+        self.best_of = self.config.get_json("stt.best_of")
+        self.beam_size = self.config.get_json("stt.beam_size")
         #PyAudio实例
         self.p = pyaudio.PyAudio()
 
@@ -114,7 +118,15 @@ class STTClient:
 
         print("\r正在转写...",end='')
         # 直接传入numpy数组
-        result = self.model.transcribe(audio, fp16=False, language="zh")    #type:ignore
+        result = self.model.transcribe(
+            audio=audio,
+            fp16=False,
+            language="zh",
+            prompt = self.prompt,
+            temperature = self.temperature,
+            best_of = self.best_of,
+            beam_size = self.beam_size
+        )   #type:ignore
         text = result["text"].strip()
         if text:
             return text

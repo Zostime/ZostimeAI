@@ -43,13 +43,13 @@ if __name__ == '__main__':
                 assistant_conversations.append(f"- {entry['memory']}")
 
             system_memory=(
-                "\n\n用户历史对话:\n" + "\n".join(user_conversations[:5]) +
-                "\n\n助手历史对话:\n" + "\n".join(assistant_conversations[:5])
+                "用户历史对话:" + "|".join(user_conversations[:5]) +
+                "助手历史对话:" + "|".join(assistant_conversations[:5])
             )
 
             gen = LLM.chat_stream(
                 messages=[
-                    {"role": "system", "content": f"Memory:{system_memory}"},
+                    {"role": "system", "content": f"记忆上下文:{system_memory}"},
                     {"role": "user", "name": USER, "content": user_input}
                 ]
             )
