@@ -26,19 +26,32 @@ if __name__ == '__main__':
             else:
                 user_input=input(f"{USER}:")
                 print()
-            user_memory = "\n".join(
-                f"- {entry['memory']}"
-                for entry in MEMORY.memory_search(user_input,USER,5)["results"]
-            )
-            llm_memory = "\n".join(
-                f"- {entry['memory']}"
-                for entry in MEMORY.memory_search(user_input,"Airis",5)["results"]
+
+            user_search = MEMORY.memory_search(user_input, USER, 20)
+            llm_search = MEMORY.memory_search(user_input, "Airis", 20)
+
+            user_conversations = []
+            for entry in user_search.get("results", []):
+                if entry is None:
+                    continue
+                user_conversations.append(f"- {entry['memory']}")
+
+            assistant_conversations = []
+            for entry in llm_search.get("results", []):
+                if entry is None:
+                    continue
+                assistant_conversations.append(f"- {entry['memory']}")
+
+            system_memory=(
+                "\n\n用户历史对话:\n" + "\n".join(user_conversations[:5]) +
+                "\n\n助手历史对话:\n" + "\n".join(assistant_conversations[:5])
             )
 
             MEMORY.memory_add(user_input, user_id=USER)
+
             gen = LLM.chat_stream(
                 messages=[
-                    {"role": "system", "content": f"Memory:[User:{user_memory},Assistant:{llm_memory}]"},
+                    {"role": "system", "content": f"Memory:{system_memory}"},
                     {"role": "user", "name": USER, "content": user_input}
                 ]
             )

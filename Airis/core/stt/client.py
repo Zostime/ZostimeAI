@@ -12,8 +12,7 @@ from ..common.logger import LogManager      #日志管理器
 class STTClient:
     def __init__(self):
         self.config = ConfigManager()
-        self.log_manager = LogManager("stt")
-        self.logger = self.log_manager.get_logger()
+        self.logger = LogManager("stt").get_logger()
 
         self.model = self._init_client()
 

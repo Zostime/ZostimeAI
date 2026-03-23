@@ -38,13 +38,13 @@ class CacheManager:
 class TTSClient:
     def __init__(self):
         self.config = ConfigManager()
-        self.log_manager = LogManager("tts")
-        self.logger = self.log_manager.get_logger()
+        self.logger = LogManager("tts").get_logger()
         self.cache = CacheManager(self.config,"tts")
 
         # 常见voice列表见 https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
         self.voice = self.config.get_json("tts.voice")
         self.language = self.config.get_json("tts.language")
+        self.speed = self.config.get_json("tts.speed")
         self.pipeline = self._init_client()
 
     def _init_client(self):
@@ -80,8 +80,8 @@ class TTSClient:
         generator = self.pipeline(
             text,
             voice=self.voice,
-            speed=1,
-            split_pattern=r'\n+'
+            speed=self.speed,
+            split_pattern=r'\n+',
         )
 
         for i, (gs, ps, audio) in enumerate(generator):

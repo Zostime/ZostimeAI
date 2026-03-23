@@ -8,7 +8,8 @@
   },
   "tts": {
     "voice": "af_heart",
-    "language": "zh"
+    "language": "zh",
+    "speed": 1.0
   },
   "stt": {
     "model": "medium",
@@ -24,13 +25,14 @@
       "provider": "chroma",
       "config": {
         "collection_name": "mem0",
-        "path": "Files/memories"
+        "path": "Files/memories/ltm"
       }
     },
     "embedder": {
       "provider": "huggingface",
       "config": {
-        "model": "sentence-transformers/all-MiniLM-L6-v2"
+        "model": "BAAI/bge-small-zh-v1.5",
+        "path": "Files/models/embedder"
       }
     },
     "llm": {
@@ -46,7 +48,7 @@
     "history_db": {
       "provider": "sqlite",
       "config": {
-        "path": "Files/memories"
+        "path": "Files/memories/ltm"
       }
     }
   },
@@ -56,12 +58,14 @@
     "llm_dir": "Files/logs/llm",
     "tts_dir": "Files/logs/tts",
     "stt_dir": "Files/logs/stt",
+    "memory_dir": "Files/logs/memory",
     "max_file_size_mb": 10,
     "backup_count": 5
   },
   "cache": {
     "llm_dir": "Files/cache/llm",
     "tts_dir": "Files/cache/tts",
-    "stt_dir": "Files/cache/stt"
+    "stt_dir": "Files/cache/stt",
+    "memory_dir": "Files/cache/memory"
   }
 }

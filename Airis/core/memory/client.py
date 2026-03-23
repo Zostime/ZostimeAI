@@ -1,7 +1,8 @@
 from mem0 import Memory
 import os
 
-from ..common.config import ConfigManager
+from ..common.config import ConfigManager   #配置管理器
+from ..common.logger import LogManager      #日志管理器
 
 # ===============================
 # Memory
@@ -10,9 +11,11 @@ class MemoryClient:
     def __init__(self):
         self.config = ConfigManager()
         self.memory=self._init_memory()
+        self.logger = LogManager("memory").get_logger()
 
     def _init_memory(self):
         os.environ["HF_TOKEN"] = self.config.get_env("HF_TOKEN")
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(self.config.get_path("memory.embedder.config.path"))
 
         mem_config = {
             "vector_store": {

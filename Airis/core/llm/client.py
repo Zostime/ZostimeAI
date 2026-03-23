@@ -21,8 +21,7 @@ class CacheManager:
             service_name: 服务名称,用于缓存目录命名
         """
         self.config = ConfigManager()
-        self.log_manager = LogManager("llm")
-        self.logger = self.log_manager.get_logger()
+        self.logger = LogManager("llm").get_logger()
         self.service_name = service_name
         self.cache_dir = self._setup_cache_dir()
     def _setup_cache_dir(self) -> Path:
@@ -90,8 +89,7 @@ class LLMClient:
     def __init__(self):
         """初始化LLMClient"""
         self.config=ConfigManager()
-        self.log_manager=LogManager("llm")
-        self.logger=self.log_manager.get_logger()
+        self.logger=LogManager("llm").get_logger()
         self.cache=CacheManager("llm")
 
         self.client = self._init_client()
