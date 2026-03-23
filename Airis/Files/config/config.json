@@ -21,34 +21,42 @@
     "silence_timeout": 1.0
   },
   "memory": {
-    "vector_store": {
-      "provider": "chroma",
-      "config": {
-        "collection_name": "mem0",
-        "path": "Files/memories/ltm"
-      }
+    "stm": {
+      "limit": 5,
+      "path": "Files/memories/short_term"
     },
-    "embedder": {
-      "provider": "huggingface",
-      "config": {
-        "model": "BAAI/bge-small-zh-v1.5",
-        "path": "Files/models/embedder"
-      }
-    },
-    "llm": {
-      "provider": "openai",
-      "config": {
-        "temperature": 0.2,
-        "max_tokens": 512,
-        "top_p": 1.0,
-        "frequency_penalty": 0,
-        "presence_penalty": 0
-      }
-    },
-    "history_db": {
-      "provider": "sqlite",
-      "config": {
-        "path": "Files/memories/ltm"
+    "ltm": {
+      "limit": 10,
+      "threshold": 0.7,
+      "vector_store": {
+        "provider": "chroma",
+        "config": {
+          "collection_name": "mem0",
+          "path": "Files/memories/long_term"
+        }
+      },
+      "embedder": {
+        "provider": "huggingface",
+        "config": {
+          "model": "BAAI/bge-small-zh-v1.5",
+          "path": "Files/models/embedder"
+        }
+      },
+      "llm": {
+        "provider": "openai",
+        "config": {
+          "temperature": 0.2,
+          "max_tokens": 512,
+          "top_p": 1.0,
+          "frequency_penalty": 0,
+          "presence_penalty": 0
+        }
+      },
+      "history_db": {
+        "provider": "sqlite",
+        "config": {
+          "path": "Files/memories/long_term"
+        }
       }
     }
   },

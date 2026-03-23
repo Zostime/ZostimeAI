@@ -1,0 +1,66 @@
+from mem0 import Memory
+import os
+
+from ..common.config import ConfigManager   #配置管理器
+from ..common.logger import LogManager      #日志管理器
+
+# ===============================
+# LTM客户端
+# ===============================
+class LTMClient:
+    def __init__(self):
+        self.config = ConfigManager()
+        self.memory=self._init_memory()
+        self.logger = LogManager("memory").get_logger()
+
+    def _init_memory(self):
+        os.environ["HF_TOKEN"] = self.config.get_env("HF_TOKEN")
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(self.config.get_path("memory.ltm.embedder.config.path"))
+
+        mem_config = {
+            "vector_store": {
+                "provider": self.config.get_json("memory.ltm.vector_store.provider"),
+                "config": {
+                    "collection_name": self.config.get_json("memory.ltm.vector_store.config.collection_name"),
+                    "path": str(self.config.get_path("memory.ltm.vector_store.config.path"))
+                }
+            },
+            "embedder": {
+                "provider": self.config.get_json("memory.ltm.embedder.provider"),
+                "config": {
+                    "model": self.config.get_json("memory.ltm.embedder.config.model")
+                }
+            },
+            "llm": {
+                "provider": self.config.get_json("memory.ltm.llm.provider"),
+                "config": {
+                    "model": self.config.get_env("MEMORY_MODEL"),
+                    "api_key": self.config.get_env("MEMORY_API_KEY"),
+                    "openai_base_url": self.config.get_env("MEMORY_BASE_URL"),
+                    "temperature": self.config.get_json("memory.ltm.llm.config.temperature"),
+                    "max_tokens": self.config.get_json("memory.ltm.llm.config.max_tokens"),
+                    "top_p": self.config.get_json("memory.ltm.llm.config.top_p"),
+                }
+            },
+            "history_db": {
+                "provider": self.config.get_json("memory.ltm.history_db.provider"),
+                "config": {
+                    "path": str(self.config.get_path("memory.ltm.history_db.config.path"))
+                }
+            }
+        }
+        return Memory.from_config(mem_config)
+
+    def add_memory(self,message: str, user_id: str):
+        self.memory.add(message, user_id=user_id)
+
+    def search_memory(self,message: str,
+                      user_id: str,
+                      ):
+        relevant_memories = self.memory.search(
+            query=message,
+            user_id=user_id,
+            limit=self.config.get_json("memory.ltm.limit"),
+            threshold=self.config.get_json("memory.ltm.threshold")
+        )
+        return relevant_memories

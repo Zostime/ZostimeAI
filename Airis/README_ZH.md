@@ -18,14 +18,22 @@ Airis/
 │   ├─tts/              # TTS模块
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   └─stt/              # STT模块
+│   ├─stt/              # STT模块
+│   │   ├─__init__.py
+│   │   └─client.py  
+│   └─memory/           # 记忆系统
 │       ├─__init__.py
-│       └─client.py  
+│       ├─manager.py    
+│       ├─stm.py
+│       └─ltm.py
 ├─Files/                # 数据和配置
-│   ├─models/           # 模型
-│   ├─cache/            # 缓存
-│   ├─config/           # 配置
-│   └─logs/             # 日志
+│   ├─models/      
+│   ├─cache/        
+│   ├─config/       
+│   ├─logs/        
+│   └─memories/         
+│       ├─short_term    
+│       └─long_term
 ├─.venv/                # Python虚拟环境
 ├─main.py               # 程序主入口
 └─requirements.txt      # 项目依赖

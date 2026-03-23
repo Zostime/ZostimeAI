@@ -18,14 +18,22 @@ Airis/
 │   ├─tts/              # TTS module
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   └─stt/              # STT module
+│   ├─stt/              # STT module
+│   │   ├─__init__.py
+│   │   └─client.py  
+│   └─memory/           # Memory systrm
 │       ├─__init__.py
-│       └─client.py  
+│       ├─manager.py    
+│       ├─stm.py
+│       └─ltm.py
 ├─Files/                # Data and config
-│   ├─models/           # Models
-│   ├─cache/            # Cache
-│   ├─config/           # Config
-│   └─logs/             # Logs
+│   ├─models/      
+│   ├─cache/        
+│   ├─config/       
+│   ├─logs/        
+│   └─memories/         
+│       ├─short_term    
+│       └─long_term
 ├─.venv/                # Python virtual environment
 ├─main.py               # Program entry point
 └─requirements.txt      # Project dependencies

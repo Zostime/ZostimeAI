@@ -2,7 +2,7 @@ import time
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
-from core.memory.client import MemoryClient
+from core.memory.manager import MemoryManager
 
 ENABLE_STT = False
 USER = "Zostime"
@@ -12,7 +12,7 @@ if __name__ == '__main__':
         LLM = LLMClient()
         TTS = TTSClient()
         STT = STTClient()
-        MEMORY = MemoryClient()
+        MEMORY = MemoryManager()
         while True:
             if ENABLE_STT:
                 while True:
@@ -27,8 +27,8 @@ if __name__ == '__main__':
                 user_input=input(f"{USER}:")
                 print()
 
-            user_search = MEMORY.memory_search(user_input, USER, 20)
-            llm_search = MEMORY.memory_search(user_input, "Airis", 20)
+            user_search = MEMORY.search_memory(user_input, USER)
+            llm_search = MEMORY.search_memory(user_input, "Airis")
 
             user_conversations = []
             for entry in user_search.get("results", []):
@@ -47,8 +47,6 @@ if __name__ == '__main__':
                 "\n\n助手历史对话:\n" + "\n".join(assistant_conversations[:5])
             )
 
-            MEMORY.memory_add(user_input, user_id=USER)
-
             gen = LLM.chat_stream(
                 messages=[
                     {"role": "system", "content": f"Memory:{system_memory}"},
@@ -65,7 +63,9 @@ if __name__ == '__main__':
                     break
             text = result['full_content']
             TTS.stream_tts(text)
-            MEMORY.memory_add(text,user_id="Airis")
+
+            MEMORY.add_memory(user_input, user_id=USER)
+            MEMORY.add_memory(text,user_id="Airis")
 
     except KeyboardInterrupt:
         exit()
