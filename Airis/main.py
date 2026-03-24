@@ -1,4 +1,6 @@
 import time
+import json
+
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
@@ -6,6 +8,37 @@ from core.memory.manager import MemoryManager
 
 ENABLE_STT = False
 USER = "Zostime"
+
+ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate",
+            "description": "计算数学表达式",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "数学表达式,例如:2+2"
+                    }
+                },
+                "required": ["expression"]
+            }
+        }
+    }
+]
+def run_tool(tool):
+    name = tool["name"]
+    args = tool["arguments"]
+    if name == "calculate":
+        try:
+            return eval(args["expression"])
+        except Exception as error:
+            return f"计算错误: {error}"
+
+    return "未知工具"
 
 if __name__ == '__main__':
     try:
@@ -46,21 +79,58 @@ if __name__ == '__main__':
                 "用户历史对话:" + "|".join(user_conversations[:5]) +
                 "助手历史对话:" + "|".join(assistant_conversations[:5])
             )
-
-            gen = LLM.chat_stream(
-                messages=[
-                    {"role": "system", "content": f"记忆上下文:{system_memory}"},
-                    {"role": "user", "name": USER, "content": user_input}
-                ]
-            )
+            messages = [
+                {"role": "system", "content": f"记忆上下文:{system_memory}"},
+                {"role": "user", "name": USER, "content": user_input}
+            ]
             while True:
-                try:
-                    chunk = next(gen)
-                    print(chunk, end='')
-                except StopIteration as e:
-                    print()
-                    result = e.value
+                gen = LLM.chat_stream(
+                    messages=messages,
+                    tools=tools if ENABLE_TOOLS else None,
+                    tool_choice="auto"
+                )
+                while True:
+                    try:
+                        chunk = next(gen)
+                        print(chunk, end='')
+                    except StopIteration as e:
+                        print()
+                        result = e.value
+                        break
+
+                tool_calls = result.get("tool_calls") or []
+
+                if len(tool_calls) == 0:
                     break
+
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"])
+                            }
+                        }
+                        for tc in tool_calls
+                    ]
+                })
+
+                for tool_call in tool_calls:
+                    try:
+                        output = run_tool(tool_call)
+                    except Exception as e:
+                        output = f"工具执行失败: {e}"
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": str(output)
+                    })
+
             text = result['full_content']
             TTS.stream_tts(text)
 

@@ -4,7 +4,8 @@
     "max_tokens": 4096,
     "top_p": 1.0,
     "frequency_penalty": 0.0,
-    "presence_penalty": 0.0
+    "presence_penalty": 0.0,
+    "tool_choice": "auto"
   },
   "tts": {
     "voice": "af_heart",
@@ -14,7 +15,7 @@
   "stt": {
     "model": "medium",
     "models_dir": "Files/models/whisper",
-    "prompt": "Zostime",
+    "prompt": "Zostime，Airis",
     "temperature": 0,
     "best_of": 1,
     "beam_size": 5,

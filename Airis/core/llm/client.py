@@ -99,6 +99,7 @@ class LLMClient:
         self.top_p = self.config.get_json('llm.top_p', 1.0)
         self.frequency_penalty = self.config.get_json('llm.frequency_penalty', 0.0)
         self.presence_penalty = self.config.get_json('llm.presence_penalty', 0.0)
+        self.tool_choice = self.config.get_json('llm.tool_choice', 'auto')
 
     def _init_client(self):
         """初始化OpenAI客户端"""
@@ -137,6 +138,9 @@ class LLMClient:
                 'top_p': kwargs.get('top_p', self.top_p),
                 'frequency_penalty': kwargs.get('frequency_penalty', self.frequency_penalty),
                 'presence_penalty': kwargs.get('presence_penalty', self.presence_penalty),
+                'tools': kwargs.get('tools', None),
+                'tool_choice': kwargs.get('tool_choice', "auto"),
+                'response_format': kwargs.get('response_format', {"type": "text"}),
                 'stream': True
             }
 
@@ -144,6 +148,7 @@ class LLMClient:
             stream = self.client.chat.completions.create(**request_params)
 
             full_content = ""
+            tool_calls_buffer = {}
             tokens_used = None
             response_model = request_params['model']
 
@@ -172,6 +177,39 @@ class LLMClient:
                     # 生成器返回片段
                     yield content_chunk
 
+                if hasattr(chunk.choices[0].delta, "tool_calls") and chunk.choices[0].delta.tool_calls:
+                    for tool_call in chunk.choices[0].delta.tool_calls:
+                        idx = tool_call.index
+
+                        if idx not in tool_calls_buffer:
+                            tool_calls_buffer[idx] = {
+                                "id": tool_call.id,
+                                "name": "",
+                                "arguments": ""
+                            }
+
+                        if tool_call.function.name:
+                            tool_calls_buffer[idx]["name"] += tool_call.function.name
+
+                        if tool_call.function.arguments:
+                            tool_calls_buffer[idx]["arguments"] += tool_call.function.arguments
+
+            parsed_tool_calls = []
+
+            for idx in sorted(tool_calls_buffer.keys()):
+                tc = tool_calls_buffer[idx]
+                try:
+                    args = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    self.logger.warn("JSON解析失败: {tc['arguments']}")
+                    args = tc["arguments"]
+
+                parsed_tool_calls.append({
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "arguments": args
+                })
+
             # 准备响应数据
             response_data = {
                 'timestamp': datetime.now().isoformat(),
@@ -184,6 +222,7 @@ class LLMClient:
                     'presence_penalty': request_params['presence_penalty']
                 },
                 'messages': messages,
+                'tool_calls': parsed_tool_calls if parsed_tool_calls else None,
                 'response': {
                     'role': 'assistant',
                     'content': full_content
@@ -200,6 +239,7 @@ class LLMClient:
             # 返回最终结果
             return {
                 'full_content': full_content,
+                'tool_calls': parsed_tool_calls if parsed_tool_calls else None,
                 'tokens_used': tokens_used,
                 'response_model': response_model,
                 'usage': response_data['usage']
