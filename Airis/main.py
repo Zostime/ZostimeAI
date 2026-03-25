@@ -5,40 +5,12 @@ from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
+from core.tools.registry import TOOLS, run_tool
 
 ENABLE_STT = False
 USER = "Zostime"
 
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "计算数学表达式",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "数学表达式,例如:2+2"
-                    }
-                },
-                "required": ["expression"]
-            }
-        }
-    }
-]
-def run_tool(tool):
-    name = tool["name"]
-    args = tool["arguments"]
-    if name == "calculate":
-        try:
-            return eval(args["expression"])
-        except Exception as error:
-            return f"计算错误: {error}"
-
-    return "未知工具"
 
 if __name__ == '__main__':
     try:
@@ -86,7 +58,7 @@ if __name__ == '__main__':
             while True:
                 gen = LLM.chat_stream(
                     messages=messages,
-                    tools=tools if ENABLE_TOOLS else None,
+                    tools=TOOLS if ENABLE_TOOLS else None,
                     tool_choice="auto"
                 )
                 while True:
