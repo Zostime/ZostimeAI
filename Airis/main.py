@@ -5,7 +5,7 @@ from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
-from core.tools.registry import TOOLS, run_tool
+from core.tools.registry import ToolRegistry
 
 ENABLE_STT = False
 USER = "Zostime"
@@ -18,6 +18,8 @@ if __name__ == '__main__':
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
+        TOOLS = ToolRegistry()
+
         while True:
             if ENABLE_STT:
                 while True:
@@ -58,7 +60,7 @@ if __name__ == '__main__':
             while True:
                 gen = LLM.chat_stream(
                     messages=messages,
-                    tools=TOOLS if ENABLE_TOOLS else None,
+                    tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
                     tool_choice="auto"
                 )
                 while True:
@@ -93,7 +95,7 @@ if __name__ == '__main__':
 
                 for tool_call in tool_calls:
                     try:
-                        output = run_tool(tool_call)
+                        output = TOOLS.run_tool(tool_call)
                     except Exception as e:
                         output = f"工具执行失败: {e}"
 

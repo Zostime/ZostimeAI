@@ -21,11 +21,15 @@ Airis/
 │   ├─stt/              # STT module
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   └─memory/           # Memory systrm
+│   ├─memory/           # Memory systrm
+│   │   ├─__init__.py
+│   │   ├─manager.py    
+│   │   ├─stm.py
+│   │   └─ltm.py
+│   └─tools/            # Tools system
 │       ├─__init__.py
-│       ├─manager.py    
-│       ├─stm.py
-│       └─ltm.py
+│       ├─registry.py   
+│       └─...
 ├─Files/                # Data and config
 │   ├─models/      
 │   ├─cache/        

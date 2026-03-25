@@ -10,6 +10,11 @@ core/llm/models
 #模型文件
 Files/models/*
 
+#tools
+core/tools/*
+!core/tools/__init__.py
+!core/tools/registry.py
+
 #.env
 Files/config/.env
 !Files/config/.env.example
