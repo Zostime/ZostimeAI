@@ -7,7 +7,7 @@ from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
 from core.tools.registry import ToolRegistry
 
-ENABLE_STT = False
+ENABLE_STT = True
 USER = "Zostime"
 
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
@@ -57,6 +57,7 @@ if __name__ == '__main__':
                 {"role": "system", "content": f"记忆上下文:{system_memory}"},
                 {"role": "user", "name": USER, "content": user_input}
             ]
+            text=""
             while True:
                 gen = LLM.chat_stream(
                     messages=messages,
@@ -68,8 +69,9 @@ if __name__ == '__main__':
                         chunk = next(gen)
                         print(chunk, end='')
                     except StopIteration as e:
-                        print()
                         result = e.value
+                        TTS.stream_tts(result['full_content'])
+                        text += result['full_content']
                         break
 
                 tool_calls = result.get("tool_calls") or []
@@ -97,16 +99,14 @@ if __name__ == '__main__':
                     try:
                         output = TOOLS.run_tool(tool_call)
                     except Exception as e:
-                        output = f"工具执行失败: {e}"
+                        output = f"工具执行失败:{e}"
 
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
                         "content": str(output)
                     })
-
-            text = result['full_content']
-            TTS.stream_tts(text)
+            print()
 
             MEMORY.add_memory(user_input, user_id=USER)
             MEMORY.add_memory(text,user_id="Airis")

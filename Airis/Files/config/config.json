@@ -15,7 +15,7 @@
   "stt": {
     "model": "medium",
     "models_dir": "Files/models/whisper",
-    "prompt": "Zostime，Airis",
+    "prompt": "Zostime,Airis",
     "temperature": 0,
     "best_of": 1,
     "beam_size": 5,
@@ -27,11 +27,11 @@
   },
   "memory": {
     "stm": {
-      "limit": 5,
+      "limit": 10,
       "path": "Files/memories/short_term"
     },
     "ltm": {
-      "limit": 10,
+      "limit": 20,
       "threshold": 0.7,
       "vector_store": {
         "provider": "chroma",
@@ -68,9 +68,11 @@
   "logging": {
     "enabled": true,
     "level": "INFO",
+    "console_level": "DEBUG",
     "llm_dir": "Files/logs/llm",
     "tts_dir": "Files/logs/tts",
     "stt_dir": "Files/logs/stt",
+    "tools_dir": "Files/logs/tools",
     "memory_dir": "Files/logs/memory",
     "max_file_size_mb": 10,
     "backup_count": 5

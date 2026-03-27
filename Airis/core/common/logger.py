@@ -58,8 +58,10 @@ class LogManager:
         )
 
         #控制台处理器
+        console_level_str = self.config.get_json('logging.console_level', log_level_str).upper()
+        console_level = getattr(logging, console_level_str, log_level)
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(log_level)
+        console_handler.setLevel(console_level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
@@ -80,8 +82,7 @@ class LogManager:
 
         self.logger = logger
 
-        self.logger.info(f"{self.service_name}日志初始化完成")
-        self.logger.info(f"日志级别:{log_level_str}")
+        self.logger.info(f"{self.service_name}日志初始化完成,日志级别:{log_level_str}")
 
     def get_logger(self):
         """返回配置好的日志记录器"""
