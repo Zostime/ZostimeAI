@@ -12,6 +12,7 @@ class ToolRegistry:
         self.tools: List[Dict] = []
         self.tool_map: Dict[str, Callable] = {}
         self.tools_dir = os.path.dirname(__file__)
+        self.disabled_tools = ["minecraft"]
         self._load_tools()
 
     def _load_tools(self):
@@ -40,6 +41,10 @@ class ToolRegistry:
                 tool_func = module.run
 
                 tool_name = tool_schema["function"]["name"]
+
+                if tool_name in self.disabled_tools:
+                    self.logger.info(f"跳过禁用工具: {tool_name}")
+                    continue
 
                 self.tools.append(tool_schema)
                 self.tool_map[tool_name] = tool_func

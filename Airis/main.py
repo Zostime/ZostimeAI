@@ -7,7 +7,7 @@ from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
 from core.tools.registry import ToolRegistry
 
-ENABLE_STT = True
+ENABLE_STT = False
 USER = "Zostime"
 
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
