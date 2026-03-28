@@ -15,6 +15,7 @@
   "stt": {
     "model": "medium",
     "models_dir": "Files/models/whisper",
+    "language": "zh",
     "prompt": "Zostime,Airis",
     "temperature": 0,
     "best_of": 1,

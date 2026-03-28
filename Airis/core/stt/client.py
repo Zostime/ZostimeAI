@@ -24,6 +24,7 @@ class STTClient:
         self.silence_threshold = self.config.get_json("stt.silence_threshold", 500)   # RMS 能量阈值
         self.silence_timeout = self.config.get_json("stt.silence_timeout", 1.0)       # 静音超时（秒）
 
+        self.language = self.config.get_json("stt.language")
         self.prompt=self.config.get_json("stt.prompt")
         self.temperature = self.config.get_json("stt.temperature")
         self.best_of = self.config.get_json("stt.best_of")
@@ -121,7 +122,7 @@ class STTClient:
         result = self.model.transcribe(
             audio=audio,
             fp16=False,
-            language="zh",
+            language=self.language,
             prompt = self.prompt,
             temperature = self.temperature,
             best_of = self.best_of,

@@ -12,15 +12,14 @@ from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
 from core.tools.registry import ToolRegistry
 
-ENABLE_STT = False
+#配置
 USER = "Zostime"
-
+ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 
 class InterruptManager:
     def __init__(self):
         self.event = threading.Event()
-        self.partial_text = ""
         threading.Thread(target=self.listener, daemon=True).start()
 
     def trigger(self):
@@ -28,16 +27,18 @@ class InterruptManager:
 
     def clear(self):
         self.event.clear()
-        self.partial_text = ""
 
     def is_interrupted(self):
         return self.event.is_set()
 
     def listener(self):
         while True:
-            keyboard.wait("ctrl+f1")
-            print("ad")
-            self.trigger()
+            if ENABLE_STT:
+                pass
+            else:
+                keyboard.wait("ctrl+f1")
+                print("\n[Ctrl+F1 打断]")
+                self.trigger()
 
 if __name__ == '__main__':
     try:
@@ -50,6 +51,8 @@ if __name__ == '__main__':
         INTERRUPT = InterruptManager()
 
         while True:
+            INTERRUPT.clear()
+
             if ENABLE_STT:
                 while True:
                     user_input=STT.listen_and_transcribe()
@@ -66,27 +69,39 @@ if __name__ == '__main__':
             user_search = MEMORY.search_memory(user_input, USER)
             llm_search = MEMORY.search_memory(user_input, "Airis")
 
-            user_conversations = []
+            user_memories = []
             for entry in user_search.get("results", []):
                 if entry is None:
                     continue
-                user_conversations.append(f"- {entry['memory']}")
+                user_memories.append(f"- {entry['memory']}")
 
-            assistant_conversations = []
+            assistant_memories = []
             for entry in llm_search.get("results", []):
                 if entry is None:
                     continue
-                assistant_conversations.append(f"- {entry['memory']}")
+                assistant_memories.append(f"- {entry['memory']}")
 
-            system_memory=(
-                "用户历史对话:" + "|".join(user_conversations[:5]) +
-                "助手历史对话:" + "|".join(assistant_conversations[:5])
-            )
+            memory_sections = []
+
+            if user_memories:
+                user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
+                memory_sections.append(f"[用户历史记忆]\n{user_items}")
+
+            if assistant_memories:
+                assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
+                memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
+
+            if not memory_sections:
+                system_memory = "暂无相关历史记忆."
+            else:
+                system_memory = "\n\n".join(memory_sections)
+
             messages = [
                 {"role": "system", "content": f"记忆上下文:{system_memory}"},
                 {"role": "user", "name": USER, "content": user_input}
             ]
             text=""
+            result = None
             while True:
                 gen = LLM.chat_stream(
                     messages=messages,
@@ -97,17 +112,22 @@ if __name__ == '__main__':
                     try:
                         chunk = next(gen)
                         print(chunk, end='')
+                        text+=chunk
+                        if INTERRUPT.is_interrupted():
+                            gen.close()
+                            break
                     except StopIteration as e:
                         result = e.value
-
                         #stream TTS
                         audio_queue = queue.Queue()
                         stop_event = threading.Event()
                         def play_worker():
                             with sd.OutputStream(samplerate=24000, channels=1, dtype=np.float32) as stream:
-                                while not stop_event.is_set():
+                                while True:
+                                    if stop_event.is_set() and audio_queue.empty():
+                                        break
                                     try:
-                                        audio_data = audio_queue.get(timeout=0.5)
+                                        audio_data = audio_queue.get(timeout=0.1)
                                         stream.write(audio_data)
                                         audio_queue.task_done()
                                     except queue.Empty:
@@ -124,14 +144,16 @@ if __name__ == '__main__':
                         play_thread.start()
                         generator = TTS.stream_tts(result['full_content'])
                         for i, (gs, ps, audio) in enumerate(generator):
+                            if INTERRUPT.is_interrupted():
+                                stop_event.set()
+                                break
                             audio_queue.put(audio)
-                        # 等待所有音频片段被播放并标记完成
-                        audio_queue.join()
                         stop_event.set()
                         play_thread.join()
-
-                        text += result['full_content']
                         break
+
+                if INTERRUPT.is_interrupted():
+                    break
 
                 tool_calls = result.get("tool_calls") or []
 
