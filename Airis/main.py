@@ -1,5 +1,10 @@
+import threading
+import keyboard
 import time
 import json
+import queue
+import sounddevice as sd
+import numpy as np
 
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
@@ -12,13 +17,37 @@ USER = "Zostime"
 
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 
+class InterruptManager:
+    def __init__(self):
+        self.event = threading.Event()
+        self.partial_text = ""
+        threading.Thread(target=self.listener, daemon=True).start()
+
+    def trigger(self):
+        self.event.set()
+
+    def clear(self):
+        self.event.clear()
+        self.partial_text = ""
+
+    def is_interrupted(self):
+        return self.event.is_set()
+
+    def listener(self):
+        while True:
+            keyboard.wait("ctrl+f1")
+            print("ad")
+            self.trigger()
+
 if __name__ == '__main__':
     try:
         LLM = LLMClient()
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
+
         TOOLS = ToolRegistry()
+        INTERRUPT = InterruptManager()
 
         while True:
             if ENABLE_STT:
@@ -70,7 +99,37 @@ if __name__ == '__main__':
                         print(chunk, end='')
                     except StopIteration as e:
                         result = e.value
-                        TTS.stream_tts(result['full_content'])
+
+                        #stream TTS
+                        audio_queue = queue.Queue()
+                        stop_event = threading.Event()
+                        def play_worker():
+                            with sd.OutputStream(samplerate=24000, channels=1, dtype=np.float32) as stream:
+                                while not stop_event.is_set():
+                                    try:
+                                        audio_data = audio_queue.get(timeout=0.5)
+                                        stream.write(audio_data)
+                                        audio_queue.task_done()
+                                    except queue.Empty:
+                                        continue
+                                # 退出前清空剩余任务
+                                while not audio_queue.empty():
+                                    try:
+                                        audio_data = audio_queue.get_nowait()
+                                        stream.write(audio_data)
+                                        audio_queue.task_done()
+                                    except queue.Empty:
+                                        break
+                        play_thread = threading.Thread(target=play_worker, daemon=True)
+                        play_thread.start()
+                        generator = TTS.stream_tts(result['full_content'])
+                        for i, (gs, ps, audio) in enumerate(generator):
+                            audio_queue.put(audio)
+                        # 等待所有音频片段被播放并标记完成
+                        audio_queue.join()
+                        stop_event.set()
+                        play_thread.join()
+
                         text += result['full_content']
                         break
 
