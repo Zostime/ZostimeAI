@@ -1,4 +1,9 @@
+import queue
+import threading
+import numpy as np
+import sounddevice as sd
 from kokoro import KPipeline
+import logging
 import os
 
 from ..common.config import ConfigManager   #配置管理器
@@ -43,16 +48,49 @@ class TTSClient:
         self.speed = self.config.get_json("tts.speed")
         self.pipeline = self._init_client()
 
+        logging.getLogger('jieba').setLevel(logging.WARNING)    #禁用jieba的日志
+
     def _init_client(self):
         os.environ["HF_TOKEN"] = self.config.get_env("HF_TOKEN")
         # 指定基础语言
         return KPipeline(lang_code=self.language, repo_id="hexgrad/Kokoro-82M")
 
     def stream_tts(self, text: str):
+        audio_queue = queue.Queue()
+        stop_event = threading.Event()
+
+        def play_worker():
+            with sd.OutputStream(samplerate=24000, channels=1, dtype=np.float32) as stream:
+                while not stop_event.is_set():
+                    try:
+                        audio_data = audio_queue.get(timeout=0.5)
+                        stream.write(audio_data)
+                        audio_queue.task_done()
+                    except queue.Empty:
+                        continue
+                #退出前清空剩余任务
+                while not audio_queue.empty():
+                    try:
+                        audio_data = audio_queue.get_nowait()
+                        stream.write(audio_data)
+                        audio_queue.task_done()
+                    except queue.Empty:
+                        break
+
+        play_thread = threading.Thread(target=play_worker, daemon=True)
+        play_thread.start()
+
         generator = self.pipeline(
             text,
             voice=self.voice,
             speed=self.speed,
             split_pattern=r'\n+',
         )
-        return generator
+
+        for i, (gs, ps, audio) in enumerate(generator):
+            audio_queue.put(audio)
+
+        # 等待所有音频片段被播放并标记完成
+        audio_queue.join()
+        stop_event.set()
+        play_thread.join()

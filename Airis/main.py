@@ -2,9 +2,6 @@ import threading
 import keyboard
 import time
 import json
-import queue
-import sounddevice as sd
-import numpy as np
 
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
@@ -112,44 +109,12 @@ if __name__ == '__main__':
                     try:
                         chunk = next(gen)
                         print(chunk, end='')
-                        text+=chunk
                         if INTERRUPT.is_interrupted():
                             gen.close()
                             break
                     except StopIteration as e:
                         result = e.value
-                        #stream TTS
-                        audio_queue = queue.Queue()
-                        stop_event = threading.Event()
-                        def play_worker():
-                            with sd.OutputStream(samplerate=24000, channels=1, dtype=np.float32) as stream:
-                                while True:
-                                    if stop_event.is_set() and audio_queue.empty():
-                                        break
-                                    try:
-                                        audio_data = audio_queue.get(timeout=0.1)
-                                        stream.write(audio_data)
-                                        audio_queue.task_done()
-                                    except queue.Empty:
-                                        continue
-                                # 退出前清空剩余任务
-                                while not audio_queue.empty():
-                                    try:
-                                        audio_data = audio_queue.get_nowait()
-                                        stream.write(audio_data)
-                                        audio_queue.task_done()
-                                    except queue.Empty:
-                                        break
-                        play_thread = threading.Thread(target=play_worker, daemon=True)
-                        play_thread.start()
-                        generator = TTS.stream_tts(result['full_content'])
-                        for i, (gs, ps, audio) in enumerate(generator):
-                            if INTERRUPT.is_interrupted():
-                                stop_event.set()
-                                break
-                            audio_queue.put(audio)
-                        stop_event.set()
-                        play_thread.join()
+                        TTS.stream_tts(result['full_content'])
                         break
 
                 if INTERRUPT.is_interrupted():

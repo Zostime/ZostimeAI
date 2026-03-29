@@ -199,7 +199,7 @@ class LLMClient:
                 try:
                     args = json.loads(tc["arguments"])
                 except json.JSONDecodeError:
-                    self.logger.warn("JSON解析失败: {tc['arguments']}")
+                    self.logger.warning("JSON解析失败: {tc['arguments']}")
                     args = tc["arguments"]
 
                 parsed_tool_calls.append({
