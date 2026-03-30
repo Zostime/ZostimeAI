@@ -1,5 +1,6 @@
 import threading
 import keyboard
+import queue
 import time
 import json
 
@@ -23,6 +24,7 @@ class InterruptManager:
         threading.Thread(target=self.listener, daemon=True).start()
 
     def trigger(self):
+        TTS.interrupt()
         self.event.set()
 
     def clear(self):
@@ -77,6 +79,83 @@ class BehaviorController:
             else:
                 continue
 
+def llm_worker():
+    while True:
+        task = llm_queue.get()
+        if task is None:
+            break
+        llm_input = task["input"]
+        llm_memory = task["memory"]
+
+        messages = [
+            {"role": "system", "content": f"记忆上下文:{llm_memory}"},
+            {"role": "user", "name": USER, "content": llm_input}
+        ]
+        result = None
+        print()
+        while True:
+            gen = LLM.chat_stream(
+                messages=messages,
+                tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
+                tool_choice="auto"
+            )
+            while True:
+                try:
+                    chunk = next(gen)
+                    print(chunk, end='')
+                    if INTERRUPT.is_interrupted():
+                        gen.close()
+                        break
+                except StopIteration as e:
+                    result = e.value
+                    tts_queue.put(result['full_content'])
+                    break
+
+            if INTERRUPT.is_interrupted():
+                break
+
+            tool_calls = result.get("tool_calls") or []
+
+            if len(tool_calls) == 0:
+                break
+
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["arguments"])
+                        }
+                    }
+                    for tc in tool_calls
+                ]
+            })
+
+            for tool_call in tool_calls:
+                try:
+                    output = TOOLS.run_tool(tool_call)
+                except Exception as e:
+                    output = f"工具执行失败:{e}"
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": str(output)
+                })
+        MEMORY.add_memory(llm_input, user_id=USER)
+        MEMORY.add_memory(result['full_content'], user_id="Airis")
+
+def tts_worker():
+    while True:
+        text = tts_queue.get()
+        if text is None:
+            break
+        TTS.stream_tts(text)
+
 if __name__ == '__main__':
     try:
         CONFIG = ConfigManager()
@@ -90,6 +169,12 @@ if __name__ == '__main__':
         TOOLS = ToolRegistry()
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
+
+        llm_queue = queue.Queue()
+        tts_queue = queue.Queue()
+
+        threading.Thread(target=llm_worker, daemon=True).start()
+        threading.Thread(target=tts_worker, daemon=True).start()
 
         while True:
             INTERRUPT.clear()
@@ -105,7 +190,7 @@ if __name__ == '__main__':
                         time.sleep(1)
             else:
                 user_input=input(f"{USER}:")
-                print()
+            print()
 
             user_search = MEMORY.search_memory(user_input, USER)
             llm_search = MEMORY.search_memory(user_input, "Airis")
@@ -135,71 +220,12 @@ if __name__ == '__main__':
             if not memory_sections:
                 system_memory = "暂无相关历史记忆."
             else:
-                system_memory = "\n\n".join(memory_sections)
+                system_memory = "\n".join(memory_sections)
 
-            messages = [
-                {"role": "system", "content": f"记忆上下文:{system_memory}"},
-                {"role": "user", "name": USER, "content": user_input}
-            ]
-            text=""
-            result = None
-            while True:
-                gen = LLM.chat_stream(
-                    messages=messages,
-                    tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
-                    tool_choice="auto"
-                )
-                while True:
-                    try:
-                        chunk = next(gen)
-                        print(chunk, end='')
-                        if INTERRUPT.is_interrupted():
-                            gen.close()
-                            break
-                    except StopIteration as e:
-                        result = e.value
-                        TTS.stream_tts(result['full_content'])
-                        break
-
-                if INTERRUPT.is_interrupted():
-                    break
-
-                tool_calls = result.get("tool_calls") or []
-
-                if len(tool_calls) == 0:
-                    break
-
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"])
-                            }
-                        }
-                        for tc in tool_calls
-                    ]
-                })
-
-                for tool_call in tool_calls:
-                    try:
-                        output = TOOLS.run_tool(tool_call)
-                    except Exception as e:
-                        output = f"工具执行失败:{e}"
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": str(output)
-                    })
-            print()
-
-            MEMORY.add_memory(user_input, user_id=USER)
-            MEMORY.add_memory(text,user_id="Airis")
+            llm_queue.put({
+                "input": user_input,
+                "memory": system_memory
+            })
 
     except KeyboardInterrupt:
         exit()
