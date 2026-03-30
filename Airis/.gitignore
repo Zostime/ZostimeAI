@@ -27,3 +27,5 @@ Files/cache/*
 
 #logs
 Files/logs/*
+
+test.py

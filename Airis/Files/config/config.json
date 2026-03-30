@@ -75,6 +75,7 @@
     "stt_dir": "Files/logs/stt",
     "tools_dir": "Files/logs/tools",
     "memory_dir": "Files/logs/memory",
+    "system_dir": "Files/logs/system",
     "max_file_size_mb": 10,
     "backup_count": 5
   },
@@ -82,6 +83,7 @@
     "llm_dir": "Files/cache/llm",
     "tts_dir": "Files/cache/tts",
     "stt_dir": "Files/cache/stt",
-    "memory_dir": "Files/cache/memory"
+    "memory_dir": "Files/cache/memory",
+    "system_dir": "Files/cache/system"
   }
 }

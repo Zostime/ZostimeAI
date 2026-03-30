@@ -9,6 +9,9 @@ from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
 from core.tools.registry import ToolRegistry
 
+from core.common.config import ConfigManager
+from core.common.logger import LogManager
+
 #配置
 USER = "Zostime"
 ENABLE_STT = False
@@ -37,8 +40,48 @@ class InterruptManager:
                 print("\n[Ctrl+F1 打断]")
                 self.trigger()
 
+class BehaviorController:
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+        self.responses = {}
+        self._last_call_time = 0
+        self._silence_time = 0
+        self.result = ""
+
+    def response_policy(self, prompt: str, memory: str) -> bool:
+        """
+        :param prompt: 提示词
+        :param memory: 记忆
+        :return: True为响应, False为不响应
+        """
+        now = time.time()
+        _delta = 0
+        if self._last_call_time != 0:
+            _delta = now - self._last_call_time
+        self._last_call_time = now
+        self._silence_time+=_delta
+
+        while True:
+            self.result = self.llm.chat(
+                messages=[
+                    {"role": "system", "content": f"{prompt},记忆上下文:{memory},只返回True或False,不要其他内容"},
+                    {"role": "user", "content": f"距离上次回复已过{self._silence_time}秒,根据记忆上下文,只返回bool值:True或False"}
+                ]
+            )['full_content'].strip()
+            if self.result in ('True', 'False'):
+                if self.result == 'True':
+                    self._silence_time = 0
+                    return True
+                else:
+                    return False
+            else:
+                continue
+
 if __name__ == '__main__':
     try:
+        CONFIG = ConfigManager()
+        LOGGER = LogManager("system")
+
         LLM = LLMClient()
         TTS = TTSClient()
         STT = STTClient()
@@ -46,6 +89,7 @@ if __name__ == '__main__':
 
         TOOLS = ToolRegistry()
         INTERRUPT = InterruptManager()
+        CONTROLLER = BehaviorController(LLM)
 
         while True:
             INTERRUPT.clear()
