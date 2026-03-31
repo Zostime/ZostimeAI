@@ -18,30 +18,6 @@ USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 
-class InterruptManager:
-    def __init__(self):
-        self.event = threading.Event()
-        threading.Thread(target=self.listener, daemon=True).start()
-
-    def trigger(self):
-        TTS.interrupt()
-        self.event.set()
-
-    def clear(self):
-        self.event.clear()
-
-    def is_interrupted(self):
-        return self.event.is_set()
-
-    def listener(self):
-        while True:
-            if ENABLE_STT:
-                pass
-            else:
-                keyboard.wait("ctrl+f1")
-                print("\n[Ctrl+F1 打断]")
-                self.trigger()
-
 class BehaviorController:
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -79,11 +55,88 @@ class BehaviorController:
             else:
                 continue
 
+    def emotion_policy(self, prompt: str, memory: str):
+        pass
+
+class InterruptManager:
+    def __init__(self):
+        self.event = threading.Event()
+        threading.Thread(target=self.listener, daemon=True).start()
+
+    def trigger(self):
+        TTS.interrupt()
+        self.event.set()
+
+    def clear(self):
+        self.event.clear()
+
+    def is_interrupted(self):
+        return self.event.is_set()
+
+    def listener(self):
+        while True:
+            if ENABLE_STT:
+                pass
+            else:
+                keyboard.wait("ctrl+f1")
+                self.trigger()
+                print()
+                print()
+                if ENABLE_STT:
+                    while True:
+                        user_input = STT.listen_and_transcribe()
+                        if user_input is not None:
+                            print(f"\r{USER}:{user_input}")
+                            break
+                        else:
+                            print("\r未识别到音频", end='')
+                            time.sleep(1)
+                else:
+                    user_input = input(f"{USER}:")
+                print()
+
+                user_search = MEMORY.search_memory(user_input, USER)
+                llm_search = MEMORY.search_memory(user_input, "Airis")
+
+                user_memories = []
+                for entry in user_search.get("results", []):
+                    if entry is None:
+                        continue
+                    user_memories.append(f"- {entry['memory']}")
+
+                assistant_memories = []
+                for entry in llm_search.get("results", []):
+                    if entry is None:
+                        continue
+                    assistant_memories.append(f"- {entry['memory']}")
+
+                memory_sections = []
+
+                if user_memories:
+                    user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
+                    memory_sections.append(f"[用户历史记忆]\n{user_items}")
+
+                if assistant_memories:
+                    assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
+                    memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
+
+                if not memory_sections:
+                    system_memory = "暂无相关历史记忆."
+                else:
+                    system_memory = "\n".join(memory_sections)
+
+                INTERRUPT.clear()
+                llm_queue.put({
+                    "input": user_input,
+                    "memory": system_memory
+                })
+
 def llm_worker():
     while True:
         task = llm_queue.get()
         if task is None:
             break
+        INTERRUPT.clear()
         llm_input = task["input"]
         llm_memory = task["memory"]
 
@@ -92,7 +145,6 @@ def llm_worker():
             {"role": "user", "name": USER, "content": llm_input}
         ]
         result = None
-        print()
         while True:
             gen = LLM.chat_stream(
                 messages=messages,
@@ -101,11 +153,11 @@ def llm_worker():
             )
             while True:
                 try:
-                    chunk = next(gen)
-                    print(chunk, end='')
                     if INTERRUPT.is_interrupted():
                         gen.close()
                         break
+                    chunk = next(gen)
+                    print(chunk, end='')
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
@@ -146,8 +198,8 @@ def llm_worker():
                     "tool_call_id": tool_call["id"],
                     "content": str(output)
                 })
-        MEMORY.add_memory(llm_input, user_id=USER)
-        MEMORY.add_memory(result['full_content'], user_id="Airis")
+            MEMORY.add_memory(llm_input, user_id=USER)
+            MEMORY.add_memory(result['full_content'], user_id="Airis")
 
 def tts_worker():
     while True:
@@ -155,6 +207,7 @@ def tts_worker():
         if text is None:
             break
         TTS.stream_tts(text)
+        INTERRUPT.clear()
 
 if __name__ == '__main__':
     try:
@@ -177,55 +230,7 @@ if __name__ == '__main__':
         threading.Thread(target=tts_worker, daemon=True).start()
 
         while True:
-            INTERRUPT.clear()
-
-            if ENABLE_STT:
-                while True:
-                    user_input=STT.listen_and_transcribe()
-                    if user_input is not None:
-                        print(f"\r{USER}:{user_input}")
-                        break
-                    else:
-                        print("\r未识别到音频",end='')
-                        time.sleep(1)
-            else:
-                user_input=input(f"{USER}:")
-            print()
-
-            user_search = MEMORY.search_memory(user_input, USER)
-            llm_search = MEMORY.search_memory(user_input, "Airis")
-
-            user_memories = []
-            for entry in user_search.get("results", []):
-                if entry is None:
-                    continue
-                user_memories.append(f"- {entry['memory']}")
-
-            assistant_memories = []
-            for entry in llm_search.get("results", []):
-                if entry is None:
-                    continue
-                assistant_memories.append(f"- {entry['memory']}")
-
-            memory_sections = []
-
-            if user_memories:
-                user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
-                memory_sections.append(f"[用户历史记忆]\n{user_items}")
-
-            if assistant_memories:
-                assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
-                memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
-
-            if not memory_sections:
-                system_memory = "暂无相关历史记忆."
-            else:
-                system_memory = "\n".join(memory_sections)
-
-            llm_queue.put({
-                "input": user_input,
-                "memory": system_memory
-            })
+            time.sleep(1)
 
     except KeyboardInterrupt:
         exit()
