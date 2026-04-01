@@ -63,29 +63,32 @@ class TTSClient:
         self._stop_event.clear()
 
         def play_worker():
-            with sd.OutputStream(samplerate=24000, channels=1, dtype=np.float32) as stream:
+            chunk_duration = 0.05  # 每次写入的时长（秒），越小响应越快
+            sample_rate = 24000
+            chunk_size = int(sample_rate * chunk_duration)
+
+            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype=np.float32) as stream:
                 self._audio_stream = stream
                 try:
                     while not self._stop_event.is_set():
                         try:
-                            audio_data = self._audio_queue.get(timeout=0.5)
-                            if audio_data is None:
+                            audio_block = self._audio_queue.get(timeout=0.5)
+                            if audio_block is None:
                                 break
-                            stream.write(audio_data)
+
+                            for start in range(0, len(audio_block), chunk_size):
+                                if self._stop_event.is_set():
+                                    break
+                                chunk = audio_block[start:start + chunk_size]
+                                stream.write(chunk)
+
                             self._audio_queue.task_done()
+
                         except queue.Empty:
                             continue
-                    # 退出前清空剩余任务
-                    while not self._audio_queue.empty():
-                        try:
-                            audio_data = self._audio_queue.get_nowait()
-                            if audio_data is None:
-                                break
-                            stream.write(audio_data)
-                            self._audio_queue.task_done()
-                        except queue.Empty:
+                        except (Exception,KeyboardInterrupt):
                             break
-                except (Exception, KeyboardInterrupt):
+                except (Exception,KeyboardInterrupt):
                     pass
 
         play_thread = threading.Thread(target=play_worker, daemon=True)
@@ -103,18 +106,11 @@ class TTSClient:
                 break
             self._audio_queue.put(audio)
 
-        # 等待所有音频片段被播放并标记完成
         if not self._stop_event.is_set():
             self._audio_queue.join()
+
         self._stop_event.set()
         play_thread.join()
 
     def interrupt(self):
         self._stop_event.set()
-        if hasattr(self, '_audio_stream') and self._audio_stream is not None:
-            try:
-                self._audio_stream.close()
-            except (sd.PortAudioError, OSError) as e:
-                self.logger.warning(f"关闭音频流失败: {e}")
-            finally:
-                self._audio_stream = None

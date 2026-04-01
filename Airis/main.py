@@ -42,8 +42,8 @@ class BehaviorController:
         while True:
             self.result = self.llm.chat(
                 messages=[
-                    {"role": "system", "content": f"{prompt},记忆上下文:{memory},只返回True或False,不要其他内容"},
-                    {"role": "user", "content": f"距离上次回复已过{self._silence_time}秒,根据记忆上下文,只返回bool值:True或False"}
+                    {"role": "system", "content": f"{prompt}, 记忆上下文:{memory}, 只返回True或False, 不要其他内容"},
+                    {"role": "user", "content": f"距离上次回复已过{self._silence_time:.1f}秒。有人说话优先返回True，长时间无人说话可返回False。根据心情与记忆，只返回True或False"}
                 ]
             )['full_content'].strip()
             if self.result in ('True', 'False'):
@@ -139,7 +139,6 @@ def llm_worker():
         INTERRUPT.clear()
         llm_input = task["input"]
         llm_memory = task["memory"]
-
         messages = [
             {"role": "system", "content": f"记忆上下文:{llm_memory}"},
             {"role": "user", "name": USER, "content": llm_input}
@@ -228,6 +227,8 @@ if __name__ == '__main__':
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
+
+
 
         while True:
             time.sleep(1)
