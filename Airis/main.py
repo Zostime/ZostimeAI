@@ -3,6 +3,7 @@ import keyboard
 import queue
 import time
 import json
+import ast
 
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
@@ -18,45 +19,51 @@ USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 
+SYSTEM_MEMORY = ""
+SYSTEM_EMOTION = {
+    "开心":0.5,
+    "悲伤":0.5,
+    "愤怒":0.5,
+    "恐惧":0.5,
+    "惊讶":0.5,
+    "厌恶":0.5,
+    "信任":0.5,
+    "期待":0.5,
+    "爱":0.5,
+    "嫉妒":0.5
+}   # 0.0~1.0
+
 class BehaviorController:
-    def __init__(self, llm: LLMClient):
+    def __init__(self,llm: LLMClient):
         self.llm = llm
-        self.responses = {}
-        self._last_call_time = 0
-        self._silence_time = 0
-        self.result = ""
+        self.messages=[]
 
-    def response_policy(self, prompt: str, memory: str) -> bool:
-        """
-        :param prompt: 提示词
-        :param memory: 记忆
-        :return: True为响应, False为不响应
-        """
-        now = time.time()
-        _delta = 0
-        if self._last_call_time != 0:
-            _delta = now - self._last_call_time
-        self._last_call_time = now
-        self._silence_time+=_delta
-
-        while True:
-            self.result = self.llm.chat(
-                messages=[
-                    {"role": "system", "content": f"{prompt}, 记忆上下文:{memory}, 只返回True或False, 不要其他内容"},
-                    {"role": "user", "content": f"距离上次回复已过{self._silence_time:.1f}秒。有人说话优先返回True，长时间无人说话可返回False。根据心情与记忆，只返回True或False"}
-                ]
-            )['full_content'].strip()
-            if self.result in ('True', 'False'):
-                if self.result == 'True':
-                    self._silence_time = 0
-                    return True
-                else:
-                    return False
-            else:
-                continue
-
-    def emotion_policy(self, prompt: str, memory: str):
+    def response_policy(self):
         pass
+
+    def emotion_policy(self):
+        global SYSTEM_MEMORY, SYSTEM_EMOTION
+        self.messages = [
+            {"role": "system", "content": f"记忆上下文:{SYSTEM_MEMORY}"},
+            {"role": "user","content": f"当前情绪:{SYSTEM_EMOTION},根据记忆上下文更新情绪,只返回一个字典,值范围在0.0~1.0间"}
+        ]
+        for attempt in range(3):
+            res = self.llm.chat(messages=self.messages)
+            raw_content = res["full_content"]
+            try:
+                emotion_dict = ast.literal_eval(raw_content)
+                if not isinstance(emotion_dict, dict):
+                    raise ValueError("返回内容不是字典")
+                for k, v in emotion_dict.items():
+                    if not (0.0 <= v <= 1.0):
+                        raise ValueError(f"情绪'{k}'的值{v}超出[0.0, 1.0]范围")
+                SYSTEM_EMOTION = emotion_dict
+                break
+            except Exception as e:
+                self.messages.append({"role": "assistant", "content": raw_content})
+                self.messages.append({"role": "user", "content": f"错误: {e},请重新生成一个合法的情绪字典."})
+        else:
+            raise RuntimeError("失败次数过多,无法获取合法情绪字典")
 
 class InterruptManager:
     def __init__(self):
@@ -97,50 +104,41 @@ class InterruptManager:
 
                 user_search = MEMORY.search_memory(user_input, USER)
                 llm_search = MEMORY.search_memory(user_input, "Airis")
-
                 user_memories = []
                 for entry in user_search.get("results", []):
                     if entry is None:
                         continue
                     user_memories.append(f"- {entry['memory']}")
-
                 assistant_memories = []
                 for entry in llm_search.get("results", []):
                     if entry is None:
                         continue
                     assistant_memories.append(f"- {entry['memory']}")
-
                 memory_sections = []
-
                 if user_memories:
                     user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
                     memory_sections.append(f"[用户历史记忆]\n{user_items}")
-
                 if assistant_memories:
                     assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
                     memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
 
+                global SYSTEM_MEMORY
                 if not memory_sections:
-                    system_memory = "暂无相关历史记忆."
+                    SYSTEM_MEMORY = "暂无相关历史记忆."
                 else:
-                    system_memory = "\n".join(memory_sections)
+                    SYSTEM_MEMORY = "\n".join(memory_sections)
 
                 INTERRUPT.clear()
-                llm_queue.put({
-                    "input": user_input,
-                    "memory": system_memory
-                })
+                llm_queue.put(user_input)
 
 def llm_worker():
     while True:
         task = llm_queue.get()
         if task is None:
             break
-        INTERRUPT.clear()
-        llm_input = task["input"]
-        llm_memory = task["memory"]
+        llm_input = task
         messages = [
-            {"role": "system", "content": f"记忆上下文:{llm_memory}"},
+            {"role": "system", "content": f"情绪:{SYSTEM_EMOTION},记忆上下文:{SYSTEM_MEMORY}"},
             {"role": "user", "name": USER, "content": llm_input}
         ]
         result = None
@@ -160,6 +158,9 @@ def llm_worker():
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
+                    MEMORY.add_memory(llm_input, user_id=USER)
+                    MEMORY.add_memory(result['full_content'], user_id="Airis")
+                    CONTROLLER.emotion_policy()
                     break
 
             if INTERRUPT.is_interrupted():
@@ -197,8 +198,6 @@ def llm_worker():
                     "tool_call_id": tool_call["id"],
                     "content": str(output)
                 })
-            MEMORY.add_memory(llm_input, user_id=USER)
-            MEMORY.add_memory(result['full_content'], user_id="Airis")
 
 def tts_worker():
     while True:
@@ -206,7 +205,6 @@ def tts_worker():
         if text is None:
             break
         TTS.stream_tts(text)
-        INTERRUPT.clear()
 
 if __name__ == '__main__':
     try:
@@ -227,8 +225,6 @@ if __name__ == '__main__':
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
-
-
 
         while True:
             time.sleep(1)
