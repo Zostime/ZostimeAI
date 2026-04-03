@@ -8,9 +8,10 @@
     "tool_choice": "auto"
   },
   "tts": {
-    "voice": "af_heart",
-    "language": "zh",
-    "speed": 1.0
+    "voice": "zh-CN-XiaoyiNeural",
+    "pitch": "+0%",
+    "rate": "+0%",
+    "volume": "+0%"
   },
   "stt": {
     "model": "medium",
