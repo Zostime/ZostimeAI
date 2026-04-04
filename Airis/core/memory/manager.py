@@ -10,10 +10,7 @@ class MemoryManager:
         self.STM.add_memory(message, user_id)
         self.LTM.add_memory(message, user_id)
 
-    def search_memory(self,message: str, user_id):
-        stm_result = self.STM.get_memory(user_id)
-        stm_memories = stm_result.get("results", [])
-
+    def search_ltm(self,message: str, user_id):
         ltm_raw = self.LTM.search_memory(message, user_id)
 
         if isinstance(ltm_raw, dict):
@@ -25,12 +22,14 @@ class MemoryManager:
 
         ltm_memories = []
         for entry in ltm_entries:
-            if isinstance(entry, dict):
-                content = entry.get("memory")
-            else:
-                content = entry
-            if content is not None:
-                ltm_memories.append({"memory": content})
+            inner = entry.get("memory", {})
+            memory_content = inner.get("memory")
+            score_value = inner.get("score")
+            if memory_content is not None:
+                ltm_memories.append({"memory": memory_content, "score": score_value})
+        return ltm_memories
 
-        combined = {"results": stm_memories + ltm_memories}
-        return combined
+    def search_stm(self, user_id):
+        stm_result = self.STM.get_memory(user_id)
+        stm_memories = stm_result.get("results", [])
+        return stm_memories

@@ -99,20 +99,21 @@ class LTMClient:
             threshold=self.config.get_json("memory.ltm.threshold")
         )
 
-        scored = []
+        scored = [] #{"memory": mem, "score": score}
 
         for mem in results.get("results", []):
             score = self._compute_score(mem)
 
-            if score > 0.3:
+            if score > self.config.get_json("memory.ltm.score_threshold"):
                 metadata = mem.get("metadata") or {}
                 metadata["last_access"] = time.time()
                 metadata["access_count"] = metadata.get("access_count", 1) + 1
 
-                scored.append((mem, score))
+                scored.append({
+                    "memory": mem,
+                    "score": score
+                })
 
-        scored.sort(key=lambda x: x[1], reverse=True)
+        scored.sort(key=lambda x: x["score"], reverse=True)
 
-        filtered = [m for m, _ in scored]
-
-        return {"results": filtered[:self.config.get_json("memory.ltm.limit")]}
+        return scored[:self.config.get_json("memory.ltm.limit")]

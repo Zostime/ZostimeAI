@@ -35,6 +35,7 @@
     "ltm": {
       "limit": 20,
       "threshold": 0.7,
+      "score_threshold": 0.3,
       "vector_store": {
         "provider": "chroma",
         "config": {

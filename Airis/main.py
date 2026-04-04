@@ -22,6 +22,7 @@ ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
+#全局变量
 SYSTEM_MEMORY = ""
 SYSTEM_EMOTION = {
     "开心":0.5,
@@ -97,6 +98,55 @@ class InterruptManager:
                 self.trigger()
                 handle_user_input()
 
+def build_memory_context(user_input):
+    user_ltm = MEMORY.search_ltm(user_input,USER)    # [{'memory': str, 'score': datetime}, ...]
+    assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
+    user_stm = MEMORY.search_stm(USER)               # [{"memory": str, "timestamp": datetime}, ...]
+    assistant_stm = MEMORY.search_stm('Airis')
+
+    # STM排序(最新在前)
+    user_stm = sorted(user_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
+    assistant_stm = sorted(assistant_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
+
+    # LTM排序(相关性高在前)
+    user_ltm = sorted(user_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
+    assistant_ltm = sorted(assistant_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
+
+    parts = ["[记忆上下文]"]
+
+    if user_stm:
+        parts.append("\n用户短期上下文:")
+        for i, entry in enumerate(user_stm):
+            tag = "最新" if i == 0 else "较新"
+            memory = entry.get("memory", "")
+            parts.append(f"- [{tag}] {memory}")
+
+    if assistant_stm:
+        parts.append("\n助手短期上下文:")
+        for i, entry in enumerate(assistant_stm):
+            tag = "最新" if i == 0 else "较新"
+            memory = entry.get("memory", "")
+            parts.append(f"- [{tag}] {memory}")
+
+    if user_ltm:
+        parts.append("\n用户长期记忆:")
+        for entry in user_ltm:
+            memory = entry.get("memory")
+            score = entry.get("score")
+            parts.append(f"- [{score:.2f}] {memory}")
+
+    if assistant_ltm:
+        parts.append("\n助手长期记忆:")
+        for entry in assistant_ltm:
+            memory = entry.get("memory")
+            score = entry.get("score")
+            parts.append(f"- [{score:.2f}] {memory}")
+
+    if len(parts) == 1:
+        return "没有相关记忆"
+
+    return "".join(parts)
+
 def handle_user_input():
     print()
     if ENABLE_STT:
@@ -110,31 +160,9 @@ def handle_user_input():
                 time.sleep(1)
     else:
         user_input = input(f"{USER}:")
-    user_search = MEMORY.search_memory(user_input, USER)
-    llm_search = MEMORY.search_memory(user_input, "Airis")
-    user_memories = []
-    for entry in user_search.get("results", []):
-        if entry is None:
-            continue
-        user_memories.append(f"- {entry['memory']}")
-    assistant_memories = []
-    for entry in llm_search.get("results", []):
-        if entry is None:
-            continue
-        assistant_memories.append(f"- {entry['memory']}")
-    memory_sections = []
-    if user_memories:
-        user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
-        memory_sections.append(f"[用户历史记忆]\n{user_items}")
-    if assistant_memories:
-        assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
-        memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
 
     global SYSTEM_MEMORY
-    if not memory_sections:
-        SYSTEM_MEMORY = "暂无相关历史记忆."
-    else:
-        SYSTEM_MEMORY = "\n".join(memory_sections)
+    SYSTEM_MEMORY = build_memory_context(user_input)
 
     INTERRUPT.clear()
     llm_queue.put(user_input)
@@ -151,6 +179,8 @@ class StateSyncManager:
         self.clients.add(websocket)
         try:
             await websocket.wait_closed()
+        except Exception as e:
+            print(f"WebSocket error: {e}")
         finally:
             self.clients.remove(websocket)
 
@@ -172,8 +202,18 @@ def llm_worker():
         if task is None:
             break
         llm_input = task
+        MEMORY.add_memory(llm_input, user_id=USER)
+
+        system_prompt=f"""
+        情绪:{SYSTEM_EMOTION}
+        记忆上下文:{SYSTEM_MEMORY}
+        记忆上下文 使用规则：
+        - 短期上下文 表示最近对话，优先使用
+        - 长期记忆 表示长期信息，按相关性使用
+        - 优先参考标记为“最新”或高score的内容
+        """
         messages = [
-            {"role": "system", "content": f"情绪:{SYSTEM_EMOTION},记忆上下文:{SYSTEM_MEMORY}"},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "name": USER, "content": llm_input}
         ]
         result = None
@@ -197,7 +237,6 @@ def llm_worker():
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
-                    MEMORY.add_memory(llm_input, user_id=USER)
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
                     CONTROLLER.emotion_policy()
                     break
@@ -250,6 +289,10 @@ def tts_worker():
             break
         TTS.stream_tts(text)
 
+async def main_loop():
+    while True:
+        await asyncio.sleep(1)
+
 if __name__ == '__main__':
     try:
         CONFIG = ConfigManager()
@@ -272,8 +315,7 @@ if __name__ == '__main__':
         threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=lambda: asyncio.run(SYNC.run()), daemon=True).start()
 
-        while True:
-            time.sleep(1)
+        asyncio.run(main_loop())  # 等效空循环
 
     except KeyboardInterrupt:
         exit()
