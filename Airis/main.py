@@ -1,5 +1,7 @@
 import threading
+import websockets
 import keyboard
+import asyncio
 import queue
 import time
 import json
@@ -18,6 +20,7 @@ from core.common.logger import LogManager
 USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
+WEBSOCKET_PORT = 8085
 
 SYSTEM_MEMORY = ""
 SYSTEM_EMOTION = {
@@ -31,7 +34,7 @@ SYSTEM_EMOTION = {
     "期待":0.5,
     "爱":0.5,
     "嫉妒":0.5
-}   # 0.0~1.0
+}   # 0.00~1.00
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
@@ -45,7 +48,7 @@ class BehaviorController:
         global SYSTEM_MEMORY, SYSTEM_EMOTION
         self.messages = [
             {"role": "system", "content": f"记忆上下文:{SYSTEM_MEMORY}"},
-            {"role": "user","content": f"当前情绪:{SYSTEM_EMOTION},根据记忆上下文更新情绪,只返回一个字典,值范围在0.0~1.0间"}
+            {"role": "user","content": f"当前情绪:{SYSTEM_EMOTION},根据记忆上下文更新情绪,只返回一个字典,值范围在0.00~1.00间"}
         ]
         for attempt in range(3):
             res = self.llm.chat(messages=self.messages)
@@ -56,7 +59,7 @@ class BehaviorController:
                     raise ValueError("返回内容不是字典")
                 for k, v in emotion_dict.items():
                     if not (0.0 <= v <= 1.0):
-                        raise ValueError(f"情绪'{k}'的值{v}超出[0.0, 1.0]范围")
+                        raise ValueError(f"情绪'{k}'的值{v}超出[0.00, 1.00]范围")
                 SYSTEM_EMOTION = emotion_dict
                 break
             except Exception as e:
@@ -64,6 +67,11 @@ class BehaviorController:
                 self.messages.append({"role": "user", "content": f"错误: {e},请重新生成一个合法的情绪字典."})
         else:
             raise RuntimeError("失败次数过多,无法获取合法情绪字典")
+
+        SYNC.push({
+            "type": "emotion",
+            "data": SYSTEM_EMOTION
+        })
 
 class InterruptManager:
     def __init__(self):
@@ -87,49 +95,76 @@ class InterruptManager:
             else:
                 keyboard.wait("ctrl+f1")
                 self.trigger()
-                print()
-                print()
-                if ENABLE_STT:
-                    while True:
-                        user_input = STT.listen_and_transcribe()
-                        if user_input is not None:
-                            print(f"\r{USER}:{user_input}")
-                            break
-                        else:
-                            print("\r未识别到音频", end='')
-                            time.sleep(1)
-                else:
-                    user_input = input(f"{USER}:")
-                print()
+                handle_user_input()
 
-                user_search = MEMORY.search_memory(user_input, USER)
-                llm_search = MEMORY.search_memory(user_input, "Airis")
-                user_memories = []
-                for entry in user_search.get("results", []):
-                    if entry is None:
-                        continue
-                    user_memories.append(f"- {entry['memory']}")
-                assistant_memories = []
-                for entry in llm_search.get("results", []):
-                    if entry is None:
-                        continue
-                    assistant_memories.append(f"- {entry['memory']}")
-                memory_sections = []
-                if user_memories:
-                    user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
-                    memory_sections.append(f"[用户历史记忆]\n{user_items}")
-                if assistant_memories:
-                    assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
-                    memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
+def handle_user_input():
+    print()
+    if ENABLE_STT:
+        while True:
+            user_input = STT.listen_and_transcribe()
+            if user_input is not None:
+                print(f"\r{USER}:{user_input}")
+                break
+            else:
+                print("\r未识别到音频", end='')
+                time.sleep(1)
+    else:
+        user_input = input(f"{USER}:")
+    user_search = MEMORY.search_memory(user_input, USER)
+    llm_search = MEMORY.search_memory(user_input, "Airis")
+    user_memories = []
+    for entry in user_search.get("results", []):
+        if entry is None:
+            continue
+        user_memories.append(f"- {entry['memory']}")
+    assistant_memories = []
+    for entry in llm_search.get("results", []):
+        if entry is None:
+            continue
+        assistant_memories.append(f"- {entry['memory']}")
+    memory_sections = []
+    if user_memories:
+        user_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(user_memories))
+        memory_sections.append(f"[用户历史记忆]\n{user_items}")
+    if assistant_memories:
+        assistant_items = "\n".join(f"{i + 1}. {mem}" for i, mem in enumerate(assistant_memories))
+        memory_sections.append(f"[助手历史记忆]\n{assistant_items}")
 
-                global SYSTEM_MEMORY
-                if not memory_sections:
-                    SYSTEM_MEMORY = "暂无相关历史记忆."
-                else:
-                    SYSTEM_MEMORY = "\n".join(memory_sections)
+    global SYSTEM_MEMORY
+    if not memory_sections:
+        SYSTEM_MEMORY = "暂无相关历史记忆."
+    else:
+        SYSTEM_MEMORY = "\n".join(memory_sections)
 
-                INTERRUPT.clear()
-                llm_queue.put(user_input)
+    INTERRUPT.clear()
+    llm_queue.put(user_input)
+
+class StateSyncManager:
+    def __init__(self):
+        self.clients = set()
+        self.queue = queue.Queue()
+
+    def push(self, data):
+        self.queue.put(data)
+
+    async def handler(self, websocket):
+        self.clients.add(websocket)
+        try:
+            await websocket.wait_closed()
+        finally:
+            self.clients.remove(websocket)
+
+    async def sender_loop(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            data = await loop.run_in_executor(None, self.queue.get)
+            if self.clients:
+                msg = json.dumps(data)
+                await asyncio.gather(*(ws.send(msg) for ws in self.clients))
+
+    async def run(self):
+        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
+            await self.sender_loop()
 
 def llm_worker():
     while True:
@@ -155,6 +190,10 @@ def llm_worker():
                         break
                     chunk = next(gen)
                     print(chunk, end='')
+                    SYNC.push({
+                        "type": "llm_stream",
+                        "data": chunk
+                    })
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
@@ -199,6 +238,11 @@ def llm_worker():
                     "content": str(output)
                 })
 
+                SYNC.push({
+                    "type": "tool_call",
+                    "data": tool_call["name"]
+                })
+
 def tts_worker():
     while True:
         text = tts_queue.get()
@@ -215,16 +259,18 @@ if __name__ == '__main__':
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
-
         TOOLS = ToolRegistry()
+
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
+        SYNC = StateSyncManager()
 
         llm_queue = queue.Queue()
         tts_queue = queue.Queue()
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
+        threading.Thread(target=lambda: asyncio.run(SYNC.run()), daemon=True).start()
 
         while True:
             time.sleep(1)
