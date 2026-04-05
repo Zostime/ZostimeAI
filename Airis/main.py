@@ -23,21 +23,6 @@ ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
-#全局变量
-SYSTEM_MEMORY = ""
-SYSTEM_EMOTION = {
-    "开心":0.50,
-    "悲伤":0.50,
-    "愤怒":0.50,
-    "恐惧":0.50,
-    "惊讶":0.50,
-    "厌恶":0.50,
-    "信任":0.50,
-    "期待":0.50,
-    "爱":0.50,
-    "嫉妒":0.50
-}   # 0.00~1.00
-
 class EventManager:
     PRIORITY_MAP = {
         "critical": 0,
@@ -82,24 +67,36 @@ class EventManager:
 
             if event["type"] == "input":
                 INTERRUPT.clear()
-                llm_queue.put(event["data"])
+                data = event["data"]
+                system_memory = build_memory_context(data['input'])
+
+                if 'system_emotion' not in locals():
+                    system_emotion = {
+                        "开心": 0.50,"悲伤": 0.50,"愤怒": 0.50,"恐惧": 0.50,"惊讶": 0.50,
+                        "厌恶": 0.50,"信任": 0.50,"期待": 0.50,"爱": 0.50,"嫉妒": 0.50
+                    }  # 0.00~1.00
+                # noinspection PyUnboundLocalVariable
+                system_emotion = CONTROLLER.emotion_policy(system_memory,system_emotion)
+                llm_queue.put({
+                    "input": data['input'],
+                    "memory": system_memory,
+                    "emotion": system_emotion
+                })
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
         self.llm = llm
-        self.messages=[]
 
     def response_policy(self):
         pass
 
-    def emotion_policy(self):
-        global SYSTEM_MEMORY, SYSTEM_EMOTION
-        self.messages = [
-            {"role": "system", "content": f"记忆上下文:{SYSTEM_MEMORY}"},
-            {"role": "user","content": f"当前情绪:{SYSTEM_EMOTION},根据记忆上下文更新情绪,只返回一个字典,值范围在0.00~1.00间"}
+    def emotion_policy(self,memory: str, emotion: dict):
+        messages = [
+            {"role": "system", "content": f"记忆上下文:{memory}"},
+            {"role": "user","content": f"当前情绪:{emotion},根据记忆上下文更新情绪,只返回一个字典,值范围在0.00~1.00间"}
         ]
         for attempt in range(3):
-            res = self.llm.chat(messages=self.messages)
+            res = self.llm.chat(messages=messages)
             raw_content = res["full_content"]
             try:
                 emotion_dict = ast.literal_eval(raw_content)
@@ -108,18 +105,18 @@ class BehaviorController:
                 for k, v in emotion_dict.items():
                     if not (0.0 <= v <= 1.0):
                         raise ValueError(f"情绪'{k}'的值{v}超出[0.00, 1.00]范围")
-                SYSTEM_EMOTION = emotion_dict
                 break
             except Exception as e:
-                self.messages.append({"role": "assistant", "content": raw_content})
-                self.messages.append({"role": "user", "content": f"错误: {e},请重新生成一个合法的情绪字典."})
+                messages.append({"role": "assistant", "content": raw_content})
+                messages.append({"role": "user", "content": f"错误: {e},请重新生成一个合法的情绪字典."})
         else:
             raise RuntimeError("失败次数过多,无法获取合法情绪字典")
 
         SYNC.push({
             "type": "emotion",
-            "data": SYSTEM_EMOTION
+            "data": emotion_dict
         })
+        return emotion_dict
 
 class InterruptManager:
     def __init__(self):
@@ -212,12 +209,11 @@ def handle_user_input():
     else:
         user_input = input(f"{USER}:")
 
-    global SYSTEM_MEMORY
-    SYSTEM_MEMORY = build_memory_context(user_input)
-
     EVENT.add_event(
         event_type="input",
-        data=user_input,
+        data={
+            "input": user_input,
+        },
         priority="high"
     )
 
@@ -255,11 +251,10 @@ def llm_worker():
         task = llm_queue.get()
         if task is None:
             break
-        llm_input = task
-        MEMORY.add_memory(llm_input, user_id=USER)
+        MEMORY.add_memory(task['input'], user_id=USER)
         system_prompt=f"""
-        情绪:{SYSTEM_EMOTION}
-        记忆上下文:{SYSTEM_MEMORY}
+        情绪:{task['emotion']}
+        记忆上下文:{task['memory']}
         记忆上下文 使用规则：
         - 短期上下文 表示最近对话，优先使用
         - 长期记忆 表示长期信息，按相关性使用
@@ -267,7 +262,7 @@ def llm_worker():
         """
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "name": USER, "content": llm_input}
+            {"role": "user", "name": USER, "content": task['input']}
         ]
         result = None
         while True:
@@ -291,7 +286,6 @@ def llm_worker():
                     result = e.value
                     tts_queue.put(result['full_content'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
-                    CONTROLLER.emotion_policy()
                     break
 
             if INTERRUPT.is_interrupted():

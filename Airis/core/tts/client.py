@@ -35,12 +35,8 @@ class TTSClient:
             stderr=subprocess.DEVNULL
         )
 
-        def wait_and_clean():
-            if self._process:
-                self._process.wait()
-                self._process = None
-        self._wait_thread = threading.Thread(target=wait_and_clean, daemon=True)
-        self._wait_thread.start()
+        self._process.wait()
+        self._process = None
 
     def interrupt(self):
         if self._process and self._process.poll() is None:
