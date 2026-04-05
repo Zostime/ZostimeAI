@@ -81,34 +81,39 @@ class EventManager:
                 except Exception as e:
                     LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
 
-def input_handler(event):
-    INTERRUPT.clear()
-    data = event["data"]
-    system_memory = build_memory_context(data['input'])
+#Event Handler
+class InputHandler:
+    def __init__(self):
+        self.system_emotion = {
+            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,
+            "恐惧": 0.50, "惊讶": 0.50, "厌恶": 0.50,
+            "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
+        }
 
-    if 'system_emotion' not in locals():
-        system_emotion = {
-            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50, "恐惧": 0.50, "惊讶": 0.50,
-            "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
-        }  # 0.00~1.00
-    # noinspection PyUnboundLocalVariable
-    system_emotion = CONTROLLER.emotion_policy(system_memory, system_emotion)
-    llm_queue.put({
-        "input": data['input'],
-        "memory": system_memory,
-        "emotion": system_emotion
-    })
+    def __call__(self, event):
+        INTERRUPT.clear()
+        data = event["data"]
 
+        system_memory = build_memory_context(data['input'])
+
+        self.system_emotion = CONTROLLER.emotion_policy(
+            system_memory,
+            self.system_emotion
+        )
+
+        llm_queue.put({
+            "input": data['input'],
+            "memory": system_memory,
+            "emotion": self.system_emotion
+        })
 def interrupt_handler(event):
     if event:
         TTS.interrupt()
-
 def sync_handler(event):
     SYNC.push({
         "type": "event",
         "data": event
     })
-
 def tick_handler(event):
     if event:
         pass
@@ -393,7 +398,7 @@ if __name__ == '__main__':
         TOOLS = ToolRegistry()
 
         EVENT = EventManager()
-        EVENT.on("input", input_handler)
+        EVENT.on("input", InputHandler())
         EVENT.on("interrupt", interrupt_handler)
         EVENT.on("*", sync_handler)
         EVENT.on("system_tick", tick_handler)
