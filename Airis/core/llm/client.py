@@ -71,7 +71,10 @@ class CacheManager:
 
             # 保存到文件
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(response_data, f, ensure_ascii=False, indent=2)
+                try:
+                    json.dump(response_data, f, ensure_ascii=False, indent=2)
+                except json.JSONDecodeError:
+                    pass
 
             self.logger.debug(f"响应已保存:{filepath}")
             return filepath
@@ -199,7 +202,7 @@ class LLMClient:
                 try:
                     args = json.loads(tc["arguments"])
                 except json.JSONDecodeError:
-                    self.logger.warning("JSON解析失败: {tc['arguments']}")
+                    self.logger.warning(F"JSON解析失败: {tc['arguments']}")
                     args = tc["arguments"]
 
                 parsed_tool_calls.append({

@@ -1,5 +1,6 @@
-import threading
+from typing import Any, Literal
 import websockets
+import threading
 import keyboard
 import asyncio
 import queue
@@ -25,17 +26,63 @@ WEBSOCKET_PORT = 8085
 #全局变量
 SYSTEM_MEMORY = ""
 SYSTEM_EMOTION = {
-    "开心":0.5,
-    "悲伤":0.5,
-    "愤怒":0.5,
-    "恐惧":0.5,
-    "惊讶":0.5,
-    "厌恶":0.5,
-    "信任":0.5,
-    "期待":0.5,
-    "爱":0.5,
-    "嫉妒":0.5
+    "开心":0.50,
+    "悲伤":0.50,
+    "愤怒":0.50,
+    "恐惧":0.50,
+    "惊讶":0.50,
+    "厌恶":0.50,
+    "信任":0.50,
+    "期待":0.50,
+    "爱":0.50,
+    "嫉妒":0.50
 }   # 0.00~1.00
+
+class EventManager:
+    PRIORITY_MAP = {
+        "critical": 0,
+        "high": 1,
+        "medium": 2,
+        "low": 3,
+    }  # EVENT 优先级
+    def __init__(self):
+        self._event_queue = queue.PriorityQueue()
+        threading.Thread(target=self.event_loop, daemon=True).start()
+
+    def add_event(self,
+                  event_type: str,
+                  data: Any = None,
+                  priority: Literal["low", "medium", "high", "critical"] = "low"
+                  ) -> None:
+        if priority not in self.PRIORITY_MAP:
+            raise ValueError(f"未定义的EVENT优先级: {priority}")
+
+        priority_val = self.PRIORITY_MAP[priority]
+        timestamp = time.time()
+        event = {
+            "timestamp": timestamp,
+            "priority": priority,
+            "type": event_type,
+            "data": data
+        }
+        # (优先级, 时间戳, event)
+        self._event_queue.put((priority_val, timestamp, event))
+
+    def event_loop(self):
+        while True:
+            _, _, event = self._event_queue.get()
+            if event is None:
+                break
+            SYNC.push({
+                "type": "event",
+                "data": event
+            })
+            if event["type"] == "interrupt":
+                TTS.interrupt()
+
+            if event["type"] == "input":
+                INTERRUPT.clear()
+                llm_queue.put(event["data"])
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
@@ -80,8 +127,12 @@ class InterruptManager:
         threading.Thread(target=self.listener, daemon=True).start()
 
     def trigger(self):
-        TTS.interrupt()
         self.event.set()
+        EVENT.add_event(
+            event_type="interrupt",
+            data=None,
+            priority="critical",
+        )
 
     def clear(self):
         self.event.clear()
@@ -145,7 +196,7 @@ def build_memory_context(user_input):
     if len(parts) == 1:
         return "没有相关记忆"
 
-    return "".join(parts)
+    return "\n".join(parts)
 
 def handle_user_input():
     print()
@@ -164,8 +215,11 @@ def handle_user_input():
     global SYSTEM_MEMORY
     SYSTEM_MEMORY = build_memory_context(user_input)
 
-    INTERRUPT.clear()
-    llm_queue.put(user_input)
+    EVENT.add_event(
+        event_type="input",
+        data=user_input,
+        priority="high"
+    )
 
 class StateSyncManager:
     def __init__(self):
@@ -203,7 +257,6 @@ def llm_worker():
             break
         llm_input = task
         MEMORY.add_memory(llm_input, user_id=USER)
-
         system_prompt=f"""
         情绪:{SYSTEM_EMOTION}
         记忆上下文:{SYSTEM_MEMORY}
@@ -266,6 +319,8 @@ def llm_worker():
             })
 
             for tool_call in tool_calls:
+                if INTERRUPT.is_interrupted():
+                    break
                 try:
                     output = TOOLS.run_tool(tool_call)
                 except Exception as e:
@@ -289,9 +344,14 @@ def tts_worker():
             break
         TTS.stream_tts(text)
 
-async def main_loop():
+def main_loop():
     while True:
-        await asyncio.sleep(1)
+        EVENT.add_event(
+            event_type="system_tick",
+            data=None,
+            priority="low"
+        )
+        time.sleep(1)
 
 if __name__ == '__main__':
     try:
@@ -304,6 +364,7 @@ if __name__ == '__main__':
         MEMORY = MemoryManager()
         TOOLS = ToolRegistry()
 
+        EVENT = EventManager()
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
         SYNC = StateSyncManager()
@@ -315,7 +376,7 @@ if __name__ == '__main__':
         threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=lambda: asyncio.run(SYNC.run()), daemon=True).start()
 
-        asyncio.run(main_loop())  # 等效空循环
+        main_loop()
 
     except KeyboardInterrupt:
         exit()
