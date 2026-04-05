@@ -140,7 +140,9 @@ class InterruptManager:
     def listener(self):
         while True:
             if ENABLE_STT:
-                pass
+                STT.detect()
+                self.trigger()
+                handle_user_input()
             else:
                 keyboard.wait("ctrl+f1")
                 self.trigger()

@@ -32,6 +32,9 @@ class STTClient:
         #PyAudio实例
         self.p = pyaudio.PyAudio()
 
+        self.stream = None
+        self.detect_chunk = None
+
     def _init_client(self) -> whisper.Whisper:
         model_name = self.config.get_json("stt.model")
         models_dir = self.config.get_path("stt.models_dir")
@@ -47,12 +50,16 @@ class STTClient:
         rms = np.sqrt(np.mean(samples ** 2))
         return rms < self.silence_threshold
 
-    def _record_until_silence(self) -> Optional[np.ndarray]:
+    def detect(self) -> bool:
         """
-        录制音频：先等待声音出现，然后录音直到连续静音超过 silence_timeout 秒。
-        返回归一化的 float32 音频数组，若未捕获到有效语音则返回 None。
+        录制音频：等待声音出现
+        :return: 返回bool: 是否检测到音频
         """
-        stream = self.p.open(
+        self.detect_chunk = None
+        if self.stream:
+            self.stream.close()
+
+        self.stream = self.p.open(
             format=self.format,
             channels=self.channels,
             rate=self.sample_rate,
@@ -60,28 +67,33 @@ class STTClient:
             frames_per_buffer=self.chunk_size
         )
 
-        print("\r等待语音输入...",end='')
-
-        #等待语音开始
         while True:
             try:
-                data = stream.read(self.chunk_size, exception_on_overflow=False)
+                self.detect_chunk = self.stream.read(self.chunk_size, exception_on_overflow=False)
             except IOError:
                 continue
-            if not self._is_silence(data):
-                break
+            if not self._is_silence(self.detect_chunk):
+                return True
+
+    def _record_until_silence(self) -> Optional[np.ndarray]:
+        """
+        录制音频：先等待声音出现，然后录音直到连续静音超过 silence_timeout 秒。
+        返回归一化的 float32 音频数组，若未捕获到有效语音则返回 None。
+        """
+        if not self.stream or self.detect_chunk is None:
+            raise RuntimeError("必须先调用 detect() 方法")
 
         print("\r开始录音...",end='')
 
         #录音直到连续静音超时
-        frames = []
+        frames = [self.detect_chunk]
         silent_chunks = 0
         # 静音阈值对应的块数
         silence_limit = int((self.silence_timeout * self.sample_rate) / self.chunk_size)
 
         while True:
             try:
-                data = stream.read(self.chunk_size, exception_on_overflow=False)
+                data = self.stream.read(self.chunk_size, exception_on_overflow=False)
             except IOError:
                 continue
             frames.append(data)
@@ -95,8 +107,8 @@ class STTClient:
                 print(f"\r检测到{self.silence_timeout}秒静音,录音结束.",end='')
                 break
 
-        stream.stop_stream()
-        stream.close()
+        self.stream.stop_stream()
+        self.stream.close()
 
         if not frames:
             return None
