@@ -33,6 +33,14 @@ class EventManager:
     def __init__(self):
         self._event_queue = queue.PriorityQueue()
         threading.Thread(target=self.event_loop, daemon=True).start()
+        self._handlers = {}
+        self._lock = threading.Lock()
+
+    def on(self, event_type: str, handler):
+        with self._lock:
+            if event_type not in self._handlers:
+                self._handlers[event_type] = []
+            self._handlers[event_type].append(handler)
 
     def add_event(self,
                   event_type: str,
@@ -58,30 +66,52 @@ class EventManager:
             _, _, event = self._event_queue.get()
             if event is None:
                 break
-            SYNC.push({
-                "type": "event",
-                "data": event
-            })
-            if event["type"] == "interrupt":
-                TTS.interrupt()
 
-            if event["type"] == "input":
-                INTERRUPT.clear()
-                data = event["data"]
-                system_memory = build_memory_context(data['input'])
+            with self._lock:
+                handlers = list(self._handlers.get(event["type"], [])) + \
+                           list(self._handlers.get("*", []))
 
-                if 'system_emotion' not in locals():
-                    system_emotion = {
-                        "开心": 0.50,"悲伤": 0.50,"愤怒": 0.50,"恐惧": 0.50,"惊讶": 0.50,
-                        "厌恶": 0.50,"信任": 0.50,"期待": 0.50,"爱": 0.50,"嫉妒": 0.50
-                    }  # 0.00~1.00
-                # noinspection PyUnboundLocalVariable
-                system_emotion = CONTROLLER.emotion_policy(system_memory,system_emotion)
-                llm_queue.put({
-                    "input": data['input'],
-                    "memory": system_memory,
-                    "emotion": system_emotion
-                })
+            for handler in handlers:
+                try:
+                    threading.Thread(
+                        target=handler,
+                        args=(event,),
+                        daemon=True
+                    ).start()
+                except Exception as e:
+                    LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
+
+def input_handler(event):
+    INTERRUPT.clear()
+    data = event["data"]
+    system_memory = build_memory_context(data['input'])
+
+    if 'system_emotion' not in locals():
+        system_emotion = {
+            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50, "恐惧": 0.50, "惊讶": 0.50,
+            "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
+        }  # 0.00~1.00
+    # noinspection PyUnboundLocalVariable
+    system_emotion = CONTROLLER.emotion_policy(system_memory, system_emotion)
+    llm_queue.put({
+        "input": data['input'],
+        "memory": system_memory,
+        "emotion": system_emotion
+    })
+
+def interrupt_handler(event):
+    if event:
+        TTS.interrupt()
+
+def sync_handler(event):
+    SYNC.push({
+        "type": "event",
+        "data": event
+    })
+
+def tick_handler(event):
+    if event:
+        pass
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
@@ -260,7 +290,7 @@ def llm_worker():
         记忆上下文 使用规则：
         - 短期上下文 表示最近对话，优先使用
         - 长期记忆 表示长期信息，按相关性使用
-        - 优先参考标记为“最新”或高score的内容
+        - 优先参考标记为"最新"或高score的内容
         """
         messages = [
             {"role": "system", "content": system_prompt},
@@ -332,6 +362,8 @@ def llm_worker():
                     "type": "tool_call",
                     "data": tool_call["name"]
                 })
+            if INTERRUPT.is_interrupted():
+                break
 
 def tts_worker():
     while True:
@@ -361,6 +393,11 @@ if __name__ == '__main__':
         TOOLS = ToolRegistry()
 
         EVENT = EventManager()
+        EVENT.on("input", input_handler)
+        EVENT.on("interrupt", interrupt_handler)
+        EVENT.on("*", sync_handler)
+        EVENT.on("system_tick", tick_handler)
+
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
         SYNC = StateSyncManager()
