@@ -23,6 +23,24 @@ ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
+class AgentState:
+    def __init__(self):
+        self.emotion = {
+            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,"恐惧": 0.50, "惊讶": 0.50,
+            "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
+        }
+        self.memory = "无相关记忆"
+        self.is_silent = False
+        self._lock = threading.Lock()
+
+    def update_memory(self, memory: dict):
+        with self._lock:
+            self.memory = memory
+
+    def update_emotion(self, emotion: dict):
+        with self._lock:
+            self.emotion = emotion
+
 class EventManager:
     PRIORITY_MAP = {
         "critical": 0,
@@ -86,12 +104,10 @@ class EventHandler:
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-
-        system_memory = build_memory_context(data['input'])
+        STATE.update_memory(build_memory_context(data['input']))
 
         llm_queue.put({
-            "input": data['input'],
-            "memory": system_memory,
+            "input": data['input']
         })
 
     # noinspection PyUnusedLocal
@@ -109,7 +125,6 @@ class BehaviorController:
         self.llm = llm
 
     def response_policy(self):
-
         pass
 
     def emotion_policy(self,memory: str, emotion: dict):
@@ -271,21 +286,17 @@ class StateSyncManager:
             await self.sender_loop()
 
 def llm_worker():
-    system_emotion = {
-        "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,
-        "恐惧": 0.50, "惊讶": 0.50, "厌恶": 0.50,
-        "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
-    }
     while True:
         task = llm_queue.get()
         if task is None:
             break
+        STATE.is_silent = False
         MEMORY.add_memory(task['input'], user_id=USER)
         system_prompt=f"""
-        情绪:{system_emotion}
+        情绪:{STATE.emotion}
         - 情绪值范围 0.00~1.00，数值越高越强烈
         - 你的回复语气、用词、态度应与情绪一致
-        记忆上下文:{task['memory']}
+        记忆上下文:{STATE.memory}
         - 短期上下文 表示最近对话，优先使用
         - 长期记忆 表示长期信息，按相关性使用
         - 优先参考标记为"最新"或高score的内容
@@ -316,10 +327,11 @@ def llm_worker():
                     result = e.value
                     tts_queue.put(result['full_content'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
-                    system_emotion = CONTROLLER.emotion_policy(
-                        task['memory'],
-                        system_emotion
-                    )
+                    STATE.update_emotion(
+                        CONTROLLER.emotion_policy(
+                        STATE.memory,
+                        STATE.emotion
+                    ))
                     break
 
             if INTERRUPT.is_interrupted():
@@ -366,6 +378,7 @@ def llm_worker():
                 })
             if INTERRUPT.is_interrupted():
                 break
+        STATE.is_silent = True
 
 def tts_worker():
     while True:
@@ -396,6 +409,7 @@ if __name__ == '__main__':
         MEMORY = MemoryManager()
         TOOLS = ToolRegistry()
 
+        STATE = AgentState()
         EVENT = EventManager()
         EVENT.on("input", EventHandler.input_handler)
         EVENT.on("interrupt", EventHandler.interrupt_handler)
