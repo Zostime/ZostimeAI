@@ -19,7 +19,7 @@ from core.common.logger import LogManager
 
 #配置
 USER = "Zostime"
-ENABLE_STT = True
+ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
@@ -81,34 +81,35 @@ class EventManager:
                 except Exception as e:
                     LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
 
-#Event Handler
-def input_handler(event):
-    INTERRUPT.clear()
-    data = event["data"]
+class EventHandler:
+    @staticmethod
+    def input_handler(event):
+        INTERRUPT.clear()
+        data = event["data"]
 
-    system_memory = build_memory_context(data['input'])
+        system_memory = build_memory_context(data['input'])
 
-    llm_queue.put({
-        "input": data['input'],
-        "memory": system_memory,
-    })
-# noinspection PyUnusedLocal
-def interrupt_handler(event):
-    TTS.interrupt()
-def sync_handler(event):
-    SYNC.push({
-        "type": "event",
-        "data": event
-    })
-# noinspection PyUnusedLocal
-def tick_handler(event):
-    pass
+        llm_queue.put({
+            "input": data['input'],
+            "memory": system_memory,
+        })
+
+    # noinspection PyUnusedLocal
+    @staticmethod
+    def interrupt_handler(event):
+        TTS.interrupt()
+
+    @staticmethod
+    # noinspection PyUnusedLocal
+    def perception_handler(event):
+        pass
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
         self.llm = llm
 
     def response_policy(self):
+
         pass
 
     def emotion_policy(self,memory: str, emotion: dict):
@@ -282,8 +283,9 @@ def llm_worker():
         MEMORY.add_memory(task['input'], user_id=USER)
         system_prompt=f"""
         情绪:{system_emotion}
+        - 情绪值范围 0.00~1.00，数值越高越强烈
+        - 你的回复语气、用词、态度应与情绪一致
         记忆上下文:{task['memory']}
-        记忆上下文 使用规则：
         - 短期上下文 表示最近对话，优先使用
         - 长期记忆 表示长期信息，按相关性使用
         - 优先参考标记为"最新"或高score的内容
@@ -395,10 +397,9 @@ if __name__ == '__main__':
         TOOLS = ToolRegistry()
 
         EVENT = EventManager()
-        EVENT.on("input", input_handler)
-        EVENT.on("interrupt", interrupt_handler)
-        EVENT.on("*", sync_handler)
-        EVENT.on("system_tick", tick_handler)
+        EVENT.on("input", EventHandler.input_handler)
+        EVENT.on("interrupt", EventHandler.interrupt_handler)
+        EVENT.on("*", EventHandler.perception_handler)
 
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
