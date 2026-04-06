@@ -19,7 +19,7 @@ from core.common.logger import LogManager
 
 #配置
 USER = "Zostime"
-ENABLE_STT = False
+ENABLE_STT = True
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
@@ -82,41 +82,27 @@ class EventManager:
                     LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
 
 #Event Handler
-class InputHandler:
-    def __init__(self):
-        self.system_emotion = {
-            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,
-            "恐惧": 0.50, "惊讶": 0.50, "厌恶": 0.50,
-            "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
-        }
+def input_handler(event):
+    INTERRUPT.clear()
+    data = event["data"]
 
-    def __call__(self, event):
-        INTERRUPT.clear()
-        data = event["data"]
+    system_memory = build_memory_context(data['input'])
 
-        system_memory = build_memory_context(data['input'])
-
-        self.system_emotion = CONTROLLER.emotion_policy(
-            system_memory,
-            self.system_emotion
-        )
-
-        llm_queue.put({
-            "input": data['input'],
-            "memory": system_memory,
-            "emotion": self.system_emotion
-        })
+    llm_queue.put({
+        "input": data['input'],
+        "memory": system_memory,
+    })
+# noinspection PyUnusedLocal
 def interrupt_handler(event):
-    if event:
-        TTS.interrupt()
+    TTS.interrupt()
 def sync_handler(event):
     SYNC.push({
         "type": "event",
         "data": event
     })
+# noinspection PyUnusedLocal
 def tick_handler(event):
-    if event:
-        pass
+    pass
 
 class BehaviorController:
     def __init__(self,llm: LLMClient):
@@ -284,13 +270,18 @@ class StateSyncManager:
             await self.sender_loop()
 
 def llm_worker():
+    system_emotion = {
+        "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,
+        "恐惧": 0.50, "惊讶": 0.50, "厌恶": 0.50,
+        "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
+    }
     while True:
         task = llm_queue.get()
         if task is None:
             break
         MEMORY.add_memory(task['input'], user_id=USER)
         system_prompt=f"""
-        情绪:{task['emotion']}
+        情绪:{system_emotion}
         记忆上下文:{task['memory']}
         记忆上下文 使用规则：
         - 短期上下文 表示最近对话，优先使用
@@ -323,6 +314,10 @@ def llm_worker():
                     result = e.value
                     tts_queue.put(result['full_content'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
+                    system_emotion = CONTROLLER.emotion_policy(
+                        task['memory'],
+                        system_emotion
+                    )
                     break
 
             if INTERRUPT.is_interrupted():
@@ -387,6 +382,8 @@ def main_loop():
         time.sleep(1)
 
 if __name__ == '__main__':
+    llm_queue = None
+    tts_queue = None
     try:
         CONFIG = ConfigManager()
         LOGGER = LogManager("system")
@@ -398,7 +395,7 @@ if __name__ == '__main__':
         TOOLS = ToolRegistry()
 
         EVENT = EventManager()
-        EVENT.on("input", InputHandler())
+        EVENT.on("input", input_handler)
         EVENT.on("interrupt", interrupt_handler)
         EVENT.on("*", sync_handler)
         EVENT.on("system_tick", tick_handler)
@@ -417,4 +414,7 @@ if __name__ == '__main__':
         main_loop()
 
     except KeyboardInterrupt:
+        if llm_queue is not None and tts_queue is not None:
+            llm_queue.put(None)
+            tts_queue.put(None)
         exit()
