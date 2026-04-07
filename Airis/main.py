@@ -23,23 +23,33 @@ ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8085
 
-class AgentState:
+class State:
+    class Agent:
+        def __init__(self):
+            self.emotion = {
+                "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50, "恐惧": 0.50, "惊讶": 0.50,
+                "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
+            }
+            self.memory = "无相关记忆"
+            self.is_silent = True
+
+    class World:
+        def __init__(self):
+            self.is_speaking = False
+
     def __init__(self):
-        self.emotion = {
-            "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50,"恐惧": 0.50, "惊讶": 0.50,
-            "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
-        }
-        self.memory = "无相关记忆"
-        self.is_silent = True
+        self.agent = State.Agent()
+        self.world = State.World()
+
         self._lock = threading.Lock()
 
     def update_memory(self, memory: dict):
         with self._lock:
-            self.memory = memory
+            self.agent.memory = memory
 
     def update_emotion(self, emotion: dict):
         with self._lock:
-            self.emotion = emotion
+            self.agent.emotion = emotion
 
 class EventManager:
     PRIORITY_MAP = {
@@ -293,10 +303,10 @@ def llm_worker():
         STATE.is_silent = False
         MEMORY.add_memory(task['input'], user_id=USER)
         system_prompt=f"""
-        情绪:{STATE.emotion}
+        情绪:{STATE.agent.emotion}
         - 情绪值范围 0.00~1.00，数值越高越强烈
         - 你的回复语气、用词、态度应与情绪一致
-        记忆上下文:{STATE.memory}
+        记忆上下文:{STATE.agent.memory}
         - 短期上下文 表示最近对话，优先使用
         - 长期记忆 表示长期信息，按相关性使用
         - 优先参考标记为"最新"或高score的内容
@@ -329,8 +339,8 @@ def llm_worker():
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
                     STATE.update_emotion(
                         CONTROLLER.emotion_policy(
-                        STATE.memory,
-                        STATE.emotion
+                        STATE.agent.memory,
+                        STATE.agent.emotion
                     ))
                     break
 
@@ -381,10 +391,10 @@ def llm_worker():
 
 def tts_worker():
     while True:
-        STATE.is_silent = False
         text = tts_queue.get()
         if text is None:
             break
+        STATE.is_silent = False
         TTS.stream_tts(text)
         STATE.is_silent = True
 
@@ -410,7 +420,7 @@ if __name__ == '__main__':
         MEMORY = MemoryManager()
         TOOLS = ToolRegistry()
 
-        STATE = AgentState()
+        STATE = State()
         EVENT = EventManager()
         EVENT.on("input", EventHandler.input_handler)
         EVENT.on("interrupt", EventHandler.interrupt_handler)
