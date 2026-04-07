@@ -117,6 +117,7 @@ class EventHandler:
         STATE.update_memory(build_memory_context(data['input']))
 
         llm_queue.put({
+            "source": data['source'],
             "input": data['input']
         })
 
@@ -257,10 +258,12 @@ def handle_user_input():
                 time.sleep(1)
     else:
         user_input = input(f"{USER}:")
+    STATE.world.is_speaking = True
 
     EVENT.add_event(
         event_type="input",
         data={
+            "source": USER,
             "input": user_input,
         },
         priority="high"
@@ -300,8 +303,8 @@ def llm_worker():
         task = llm_queue.get()
         if task is None:
             break
-        STATE.is_silent = False
-        MEMORY.add_memory(task['input'], user_id=USER)
+        STATE.agent.is_silent = False
+        MEMORY.add_memory(task['input'], user_id=task['source'])
         system_prompt=f"""
         情绪:{STATE.agent.emotion}
         - 情绪值范围 0.00~1.00，数值越高越强烈
@@ -313,7 +316,7 @@ def llm_worker():
         """
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "name": USER, "content": task['input']}
+            {"role": "user", "name": task['source'], "content": task['input']}
         ]
         result = None
         while True:
@@ -394,9 +397,9 @@ def tts_worker():
         text = tts_queue.get()
         if text is None:
             break
-        STATE.is_silent = False
+        STATE.agent.is_silent = False
         TTS.stream_tts(text)
-        STATE.is_silent = True
+        STATE.agent.is_silent = True
 
 def main_loop():
     while True:
