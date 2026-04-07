@@ -30,7 +30,7 @@ class AgentState:
             "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
         }
         self.memory = "无相关记忆"
-        self.is_silent = False
+        self.is_silent = True
         self._lock = threading.Lock()
 
     def update_memory(self, memory: dict):
@@ -378,14 +378,15 @@ def llm_worker():
                 })
             if INTERRUPT.is_interrupted():
                 break
-        STATE.is_silent = True
 
 def tts_worker():
     while True:
+        STATE.is_silent = False
         text = tts_queue.get()
         if text is None:
             break
         TTS.stream_tts(text)
+        STATE.is_silent = True
 
 def main_loop():
     while True:
