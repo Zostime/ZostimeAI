@@ -25,6 +25,7 @@ class TTSClient:
             "edge-playback",
             "--text", text,
             "--voice", self.voice,
+            "--pitch", self.pitch,
             "--rate", self.rate,
             "--volume", self.volume,
         ]

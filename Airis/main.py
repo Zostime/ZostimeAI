@@ -36,6 +36,11 @@ class State:
     class World:
         def __init__(self):
             self.is_speaking = False
+            self.input = {
+                "content": "",
+                "source": "",
+                "timestamp": None
+            }
 
     def __init__(self):
         self.agent = State.Agent()
@@ -116,9 +121,15 @@ class EventHandler:
         data = event["data"]
         STATE.update_memory(build_memory_context(data['input']))
 
-        llm_queue.put({
+        STATE.world.input={
+            "content": data['input'],
             "source": data['source'],
-            "input": data['input']
+            "timestamp": time.time()
+        }
+
+        llm_queue.put({
+            "source": USER,
+            "input": STATE.world.input['content']
         })
 
     # noinspection PyUnusedLocal
@@ -126,17 +137,9 @@ class EventHandler:
     def interrupt_handler(event):
         TTS.interrupt()
 
-    @staticmethod
-    # noinspection PyUnusedLocal
-    def perception_handler(event):
-        pass
-
 class BehaviorController:
     def __init__(self,llm: LLMClient):
         self.llm = llm
-
-    def response_policy(self):
-        pass
 
     def emotion_policy(self,memory: str, emotion: dict):
         messages = [
@@ -400,15 +403,11 @@ def tts_worker():
         STATE.agent.is_silent = False
         TTS.stream_tts(text)
         STATE.agent.is_silent = True
+        STATE.world.is_speaking = False
 
-def main_loop():
+async def main_loop():
     while True:
-        EVENT.add_event(
-            event_type="system_tick",
-            data=None,
-            priority="low"
-        )
-        time.sleep(1)
+        await asyncio.sleep(1)
 
 if __name__ == '__main__':
     llm_queue = None
@@ -427,7 +426,6 @@ if __name__ == '__main__':
         EVENT = EventManager()
         EVENT.on("input", EventHandler.input_handler)
         EVENT.on("interrupt", EventHandler.interrupt_handler)
-        EVENT.on("*", EventHandler.perception_handler)
 
         INTERRUPT = InterruptManager()
         CONTROLLER = BehaviorController(LLM)
@@ -440,7 +438,7 @@ if __name__ == '__main__':
         threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=lambda: asyncio.run(SYNC.run()), daemon=True).start()
 
-        main_loop()
+        asyncio.run(main_loop())
 
     except KeyboardInterrupt:
         if llm_queue is not None and tts_queue is not None:

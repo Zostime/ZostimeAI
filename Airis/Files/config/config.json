@@ -9,7 +9,7 @@
   },
   "tts": {
     "voice": "zh-CN-XiaoyiNeural",
-    "pitch": "+0%",
+    "pitch": "+0Hz",
     "rate": "+0%",
     "volume": "+0%"
   },
