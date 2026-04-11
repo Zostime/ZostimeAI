@@ -268,7 +268,6 @@ def llm_worker():
             break
         STATE.agent.is_silent = False
         STATE.world.is_speaking = False
-        MEMORY.add_memory(task['input'], user_id=task['source'])
         system_prompt = PROMPT.build({
             "memory": STATE.agent.memory
         })
@@ -297,6 +296,7 @@ def llm_worker():
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
+                    MEMORY.add_memory(task['input'], user_id=task['source'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
                     break
 

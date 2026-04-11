@@ -1,3 +1,5 @@
+import threading
+
 from mem0 import Memory
 import os
 import math
@@ -12,10 +14,12 @@ from ..common.logger import LogManager      #日志管理器
 class LTMClient:
     def __init__(self):
         self.config = ConfigManager()
-        self.memory=self._init_memory()
         self.logger = LogManager("memory").get_logger()
 
+        self.memory=self._init_memory()
+
     def _init_memory(self):
+        self.logger.debug("正在初始化 Mem0 配置...")
         os.environ["HF_TOKEN"] = self.config.get_env("HF_TOKEN")
         os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(self.config.get_path("memory.ltm.embedder.config.path"))
 
@@ -51,7 +55,14 @@ class LTMClient:
                 }
             }
         }
-        return Memory.from_config(mem_config)
+        self.logger.debug(f"向量存储路径: {mem_config['vector_store']['config']['path']}")
+        try:
+            memory = Memory.from_config(mem_config)
+            self.logger.debug("Mem0 初始化成功")
+            return memory
+        except Exception as e:
+            self.logger.error(f"Mem0 初始化失败: {e}", exc_info=True)
+            raise
 
     @staticmethod
     def _compute_score(mem):
@@ -78,18 +89,23 @@ class LTMClient:
         return score
 
     def add_memory(self, message: str, user_id: str):
-        metadata = {
-            "importance": 0.5,
-            "created_at": time.time(),
-            "last_access": time.time(),
-            "access_count": 1
-        }
-
-        self.memory.add(
-            message,
-            user_id=user_id,
-            metadata=metadata
-        )
+        def _add():
+            try:
+                metadata = {
+                    "importance": 0.5,
+                    "created_at": time.time(),
+                    "last_access": time.time(),
+                    "access_count": 1
+                }
+                self.memory.add(
+                    message,
+                    user_id=user_id,
+                    metadata=metadata
+                )
+                self.logger.debug(f"记忆添加成功")
+            except Exception as e:
+                self.logger.error(f"记忆添加失败: {e}", exc_info=True)
+        threading.Thread(target=_add, daemon=True).start()
 
     def search_memory(self, message: str, user_id: str):
         results = self.memory.search(
