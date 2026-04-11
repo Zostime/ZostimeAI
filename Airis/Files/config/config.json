@@ -27,6 +27,12 @@
     "silence_threshold": 500,
     "silence_timeout": 1.0
   },
+  "prompts": {
+    "path": [
+      "core/prompts/system.md",
+      "core/prompts/personality.md"
+    ]
+  },
   "memory": {
     "stm": {
       "limit": 10,

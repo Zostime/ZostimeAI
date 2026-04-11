@@ -6,12 +6,12 @@ import asyncio
 import queue
 import time
 import json
-import ast
 
 from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
+from core.prompts.builder import PromptBuilder
 from core.tools.registry import ToolRegistry
 
 from core.common.config import ConfigManager
@@ -21,15 +21,11 @@ from core.common.logger import LogManager
 USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
-WEBSOCKET_PORT = 8085
+WEBSOCKET_PORT = 8090
 
 class State:
     class Agent:
         def __init__(self):
-            self.emotion = {
-                "开心": 0.50, "悲伤": 0.50, "愤怒": 0.50, "恐惧": 0.50, "惊讶": 0.50,
-                "厌恶": 0.50, "信任": 0.50, "期待": 0.50, "爱": 0.50, "嫉妒": 0.50
-            }
             self.memory = "无相关记忆"
             self.is_silent = True
 
@@ -51,10 +47,6 @@ class State:
     def update_memory(self, memory: dict):
         with self._lock:
             self.agent.memory = memory
-
-    def update_emotion(self, emotion: dict):
-        with self._lock:
-            self.agent.emotion = emotion
 
 class EventManager:
     PRIORITY_MAP = {
@@ -136,38 +128,6 @@ class EventHandler:
     @staticmethod
     def interrupt_handler(event):
         TTS.interrupt()
-
-class BehaviorController:
-    def __init__(self,llm: LLMClient):
-        self.llm = llm
-
-    def emotion_policy(self,memory: str, emotion: dict):
-        messages = [
-            {"role": "system", "content": f"记忆上下文:{memory}"},
-            {"role": "user","content": f"当前情绪:{emotion},根据记忆上下文更新情绪,只返回一个字典,值范围在0.00~1.00间"}
-        ]
-        for attempt in range(3):
-            res = self.llm.chat(messages=messages)
-            raw_content = res["full_content"]
-            try:
-                emotion_dict = ast.literal_eval(raw_content)
-                if not isinstance(emotion_dict, dict):
-                    raise ValueError("返回内容不是字典")
-                for k, v in emotion_dict.items():
-                    if not (0.0 <= v <= 1.0):
-                        raise ValueError(f"情绪'{k}'的值{v}超出[0.00, 1.00]范围")
-                break
-            except Exception as e:
-                messages.append({"role": "assistant", "content": raw_content})
-                messages.append({"role": "user", "content": f"错误: {e},请重新生成一个合法的情绪字典."})
-        else:
-            raise RuntimeError("失败次数过多,无法获取合法情绪字典")
-
-        SYNC.push({
-            "type": "emotion",
-            "data": emotion_dict
-        })
-        return emotion_dict
 
 class InterruptManager:
     def __init__(self):
@@ -307,16 +267,11 @@ def llm_worker():
         if task is None:
             break
         STATE.agent.is_silent = False
+        STATE.world.is_speaking = False
         MEMORY.add_memory(task['input'], user_id=task['source'])
-        system_prompt=f"""
-        情绪:{STATE.agent.emotion}
-        - 情绪值范围 0.00~1.00，数值越高越强烈
-        - 你的回复语气、用词、态度应与情绪一致
-        记忆上下文:{STATE.agent.memory}
-        - 短期上下文 表示最近对话，优先使用
-        - 长期记忆 表示长期信息，按相关性使用
-        - 优先参考标记为"最新"或高score的内容
-        """
+        system_prompt = PROMPT.build({
+            "memory": STATE.agent.memory
+        })
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "name": task['source'], "content": task['input']}
@@ -343,11 +298,6 @@ def llm_worker():
                     result = e.value
                     tts_queue.put(result['full_content'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
-                    STATE.update_emotion(
-                        CONTROLLER.emotion_policy(
-                        STATE.agent.memory,
-                        STATE.agent.emotion
-                    ))
                     break
 
             if INTERRUPT.is_interrupted():
@@ -403,7 +353,6 @@ def tts_worker():
         STATE.agent.is_silent = False
         TTS.stream_tts(text)
         STATE.agent.is_silent = True
-        STATE.world.is_speaking = False
 
 async def main_loop():
     while True:
@@ -420,6 +369,7 @@ if __name__ == '__main__':
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
+        PROMPT = PromptBuilder()
         TOOLS = ToolRegistry()
 
         STATE = State()
@@ -428,7 +378,6 @@ if __name__ == '__main__':
         EVENT.on("interrupt", EventHandler.interrupt_handler)
 
         INTERRUPT = InterruptManager()
-        CONTROLLER = BehaviorController(LLM)
         SYNC = StateSyncManager()
 
         llm_queue = queue.Queue()

@@ -6,31 +6,36 @@
 ## File structure
 ```
 Airis/
-├─core/                 # Core
-│   ├─__init__.py  
-│   ├─common/           # Public module
-│   │  ├─__init__.py    
-│   │  ├─config.py      
-│   │  └─logger.py      
-│   ├─llm/              # LLM module
+├─core/                  # Core
+│   ├─__init__.py   
+│   ├─common/            # Public module
+│   │  ├─__init__.py     
+│   │  ├─config.py       
+│   │  └─logger.py       
+│   ├─llm/               # LLM module
 │   │   ├─__init__.py
 │   │   └─client.py  
-│   ├─tts/              # TTS module
-│   │   ├─__init__.py
-│   │   └─client.py  
-│   ├─stt/              # STT module
-│   │   ├─__init__.py
-│   │   └─client.py  
-│   ├─memory/           # Memory systrm
-│   │   ├─__init__.py
-│   │   ├─manager.py    
-│   │   ├─stm.py
-│   │   └─ltm.py
-│   └─tools/            # Tools system
-│       ├─__init__.py
-│       ├─registry.py   
-│       └─...
-├─Files/                # Data and config
+│   ├─prompts/           # PROMPTS module
+│   │   ├─init.py
+│   │   ├─system.md      # system prompt
+│   │   ├─personality.md # personality prompt
+│   │   └─builder.py     # prompts builder
+│   ├─tts/               # TTS module
+│   │   ├─__init__.py 
+│   │   └─client.py   
+│   ├─stt/               # STT module
+│   │   ├─__init__.py 
+│   │   └─client.py   
+│   ├─memory/            # Memory systrm
+│   │   ├─__init__.py 
+│   │   ├─manager.py     
+│   │   ├─stm.py 
+│   │   └─ltm.py 
+│   └─tools/             # Tools system
+│       ├─__init__.py 
+│       ├─registry.py    
+│       └─... 
+├─Files/                 # Data and config
 │   ├─models/      
 │   ├─cache/        
 │   ├─config/       
@@ -38,9 +43,9 @@ Airis/
 │   └─memories/         
 │       ├─short_term    
 │       └─long_term
-├─.venv/                # Python virtual environment
-├─main.py               # Program entry point
-└─requirements.txt      # Project dependencies
+├─.venv/                 # Python virtual environment
+├─main.py                # Program entry point
+└─requirements.txt       # Project dependencies
 ```
 ## Start
 - Copy .env.example as .env and fill in the actual values

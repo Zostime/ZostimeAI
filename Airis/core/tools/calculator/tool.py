@@ -1,3 +1,5 @@
+from simpleeval import simple_eval
+
 TOOL = {
         "type": "function",
         "function": {
@@ -18,6 +20,6 @@ TOOL = {
 
 def run(expression: str):
     try:
-        return eval(expression)
+        return simple_eval(expression)
     except Exception as e:
         return f"计算错误:{e}"
