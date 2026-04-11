@@ -289,7 +289,7 @@ def llm_worker():
                         gen.close()
                         break
                     chunk = next(gen)
-                    print(chunk, end='')
+                    print(chunk, end='', flush=True)
                     SYNC.push({
                         "type": "llm_stream",
                         "data": chunk
