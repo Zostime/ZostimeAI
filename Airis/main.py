@@ -276,75 +276,84 @@ def llm_worker():
             {"role": "user", "name": task['source'], "content": task['input']}
         ]
         result = None
-        while True:
-            gen = LLM.chat_stream(
-                messages=messages,
-                tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
-                tool_choice="auto"
-            )
+        try:
             while True:
-                try:
-                    if INTERRUPT.is_interrupted():
-                        gen.close()
+                gen = LLM.chat_stream(
+                    messages=messages,
+                    tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
+                    tool_choice="auto"
+                )
+                while True:
+                    try:
+                        if INTERRUPT.is_interrupted():
+                            gen.close()
+                            break
+                        chunk = next(gen)
+                        print(chunk, end='', flush=True)
+                        SYNC.push({
+                            "type": "llm_stream",
+                            "data": chunk
+                        })
+                    except StopIteration as e:
+                        result = e.value
+                        tts_queue.put(result['full_content'])
+                        MEMORY.add_memory(result['full_content'], user_id="Airis")
                         break
-                    chunk = next(gen)
-                    print(chunk, end='', flush=True)
-                    SYNC.push({
-                        "type": "llm_stream",
-                        "data": chunk
-                    })
-                except StopIteration as e:
-                    result = e.value
-                    tts_queue.put(result['full_content'])
-                    MEMORY.add_memory(result['full_content'], user_id="Airis")
-                    break
 
-            if INTERRUPT.is_interrupted():
-                break
-
-            tool_calls = result.get("tool_calls") or []
-
-            if len(tool_calls) == 0:
-                break
-
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc["arguments"])
-                        }
-                    }
-                    for tc in tool_calls
-                ]
-            })
-
-            for tool_call in tool_calls:
                 if INTERRUPT.is_interrupted():
                     break
-                try:
-                    output = TOOLS.run_tool(tool_call)
-                except Exception as e:
-                    output = f"工具执行失败:{e}"
+
+                tool_calls = result.get("tool_calls") or []
+
+                if len(tool_calls) == 0:
+                    break
 
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": str(output)
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"])
+                            }
+                        }
+                        for tc in tool_calls
+                    ]
                 })
 
-                SYNC.push({
-                    "type": "tool_call",
-                    "data": tool_call["name"]
-                })
-            if INTERRUPT.is_interrupted():
-                break
-        MEMORY.add_memory(task['input'], user_id=task['source'])
-        STATE.env.is_speaking = False
+                for tool_call in tool_calls:
+                    if INTERRUPT.is_interrupted():
+                        break
+                    try:
+                        output = TOOLS.run_tool(tool_call)
+                    except Exception as e:
+                        output = f"工具执行失败:{e}"
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": str(output)
+                    })
+
+                    SYNC.push({
+                        "type": "tool_call",
+                        "data": tool_call["name"]
+                    })
+                if INTERRUPT.is_interrupted():
+                    break
+
+            MEMORY.add_memory(task['input'], user_id=task['source'])
+
+        except Exception as e:  # noqa
+            print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
+            tts_queue.put("Someone tell Zostime there is a problem with my AI.")
+            LOGGER.logger.error(f"处理请求时发生未知错误: {e}")
+        finally:
+            STATE.env.is_speaking = False
+            STATE.agent.is_silent = True
 
 def tts_worker():
     while True:
