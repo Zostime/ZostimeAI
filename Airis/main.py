@@ -40,7 +40,7 @@ class State:
 
     def __init__(self):
         self.agent = State.Agent()
-        self.env = STATE.Env()
+        self.env = State.Env()
 
         self._lock = threading.Lock()
 
