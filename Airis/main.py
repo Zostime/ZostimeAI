@@ -11,7 +11,7 @@ from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
-from core.prompts.builder import PromptBuilder
+from core.prompts.manager import PromptManager
 from core.tools.registry import ToolRegistry
 
 from core.common.config import ConfigManager
@@ -26,13 +26,13 @@ WEBSOCKET_PORT = 8090
 class State:
     class Agent:
         def __init__(self):
-            self.memory = "无相关记忆"
-            self.is_silent = True
+            self.memory: str = "无相关记忆"
+            self.is_silent: bool = True
 
     class Env:
         def __init__(self):
-            self.is_speaking = False
-            self.input = {
+            self.is_speaking: bool = False
+            self.input: dict = {
                 "content": "",
                 "source": "",
                 "timestamp": None
@@ -268,7 +268,7 @@ def llm_worker():
         if task is None:
             break
         STATE.agent.is_silent = False
-        system_prompt = PROMPT.build({
+        system_prompt = PROMPT.render({
             "memory": STATE.agent.memory
         })
         messages = [
@@ -370,7 +370,7 @@ if __name__ == '__main__':
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
-        PROMPT = PromptBuilder()
+        PROMPT = PromptManager()
         TOOLS = ToolRegistry()
 
         STATE = State()
