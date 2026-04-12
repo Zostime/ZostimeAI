@@ -20,7 +20,7 @@ from core.common.logger import LogManager
 #配置
 USER = "Zostime"
 ENABLE_STT = False
-ENABLE_TOOLS = True    #某些LLM不支持tool_calls则设为False
+ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8090
 
 class State:
@@ -29,7 +29,7 @@ class State:
             self.memory = "无相关记忆"
             self.is_silent = True
 
-    class World:
+    class Env:
         def __init__(self):
             self.is_speaking = False
             self.input = {
@@ -40,7 +40,7 @@ class State:
 
     def __init__(self):
         self.agent = State.Agent()
-        self.world = State.World()
+        self.env = STATE.Env()
 
         self._lock = threading.Lock()
 
@@ -113,7 +113,7 @@ class EventHandler:
         data = event["data"]
         STATE.update_memory(build_memory_context(data['input']))
 
-        STATE.world.input={
+        STATE.env.input={
             "content": data['input'],
             "source": data['source'],
             "timestamp": time.time()
@@ -121,13 +121,14 @@ class EventHandler:
 
         llm_queue.put({
             "source": USER,
-            "input": STATE.world.input['content']
+            "input": STATE.env.input['content']
         })
 
     # noinspection PyUnusedLocal
     @staticmethod
     def interrupt_handler(event):
         TTS.interrupt()
+        STATE.agent.is_silent = True
 
 class InterruptManager:
     def __init__(self):
@@ -221,7 +222,7 @@ def handle_user_input():
                 time.sleep(1)
     else:
         user_input = input(f"{USER}:")
-    STATE.world.is_speaking = True
+    STATE.env.is_speaking = True
 
     EVENT.add_event(
         event_type="input",
@@ -267,7 +268,6 @@ def llm_worker():
         if task is None:
             break
         STATE.agent.is_silent = False
-        STATE.world.is_speaking = False
         system_prompt = PROMPT.build({
             "memory": STATE.agent.memory
         })
@@ -296,7 +296,6 @@ def llm_worker():
                 except StopIteration as e:
                     result = e.value
                     tts_queue.put(result['full_content'])
-                    MEMORY.add_memory(task['input'], user_id=task['source'])
                     MEMORY.add_memory(result['full_content'], user_id="Airis")
                     break
 
@@ -344,6 +343,8 @@ def llm_worker():
                 })
             if INTERRUPT.is_interrupted():
                 break
+        MEMORY.add_memory(task['input'], user_id=task['source'])
+        STATE.env.is_speaking = False
 
 def tts_worker():
     while True:

@@ -35,7 +35,7 @@
   },
   "memory": {
     "stm": {
-      "limit": 10,
+      "limit": 20,
       "path": "Files/memories/short_term"
     },
     "ltm": {

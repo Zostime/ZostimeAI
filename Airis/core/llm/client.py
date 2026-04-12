@@ -73,7 +73,7 @@ class CacheManager:
             with open(filepath, 'w', encoding='utf-8') as f:
                 try:
                     json.dump(response_data, f, ensure_ascii=False, indent=2)
-                except json.JSONDecodeError:
+                except TypeError:
                     pass
 
             self.logger.debug(f"响应已保存:{filepath}")
