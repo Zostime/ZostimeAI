@@ -34,7 +34,7 @@ class CacheManager:
             #创建子目录
             sub_dirs = ['conversations']
             for sub_dir in sub_dirs:
-                (cache_dir / sub_dir).mkdir(exist_ok=True)
+                (cache_dir / sub_dir).mkdir(exist_ok=True, parents=True)
 
             self.logger.info(f"{self.service_name}缓存目录:{cache_dir}")
             return cache_dir

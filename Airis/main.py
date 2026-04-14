@@ -350,7 +350,7 @@ def llm_worker():
         except Exception as e:  # noqa
             print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
             tts_queue.put("Someone tell Zostime there is a problem with my AI.")
-            LOGGER.logger.error(f"处理请求时发生未知错误: {e}")
+            LOGGER.logger.error(f"处理请求时发生未知错误: {e}", exc_info=True)
         finally:
             STATE.env.is_speaking = False
             STATE.agent.is_silent = True

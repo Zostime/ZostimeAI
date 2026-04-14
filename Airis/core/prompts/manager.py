@@ -1,3 +1,6 @@
+"""
+SystemPrompt: static + ChatHistoryPrompt: dynamic + RuntimeStatePrompt: dynamic -> prompt
+"""
 import os
 from ..common.config import ConfigManager
 
@@ -20,6 +23,9 @@ class PromptManager:
                     parts.append(f"# {filename}\n{text}")
             except FileNotFoundError:
                 raise FileNotFoundError(f"Prompt {prompt} not found")
+
+            except KeyError as e:
+                raise KeyError(f"You need to pass in the variables {e} required by {prompt}")
 
         self.prompt = "".join(parts)
         return self.prompt

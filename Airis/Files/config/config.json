@@ -30,7 +30,9 @@
   "prompts": {
     "path": [
       "core/prompts/system.md",
-      "core/prompts/personality.md"
+      "core/prompts/personality.md",
+      "core/prompts/memory.md",
+      "core/prompts/runtime_state.md"
     ]
   },
   "memory": {
