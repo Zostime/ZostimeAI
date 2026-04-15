@@ -61,7 +61,7 @@ class EventManager:
         self._handlers = {}
         self._lock = threading.Lock()
 
-    def on(self, event_type: str, handler):
+    def on(self, event_type: str, handler) -> None:
         with self._lock:
             if event_type not in self._handlers:
                 self._handlers[event_type] = []
@@ -160,7 +160,36 @@ class InterruptManager:
                 self.trigger()
                 handle_user_input()
 
-def build_memory_context(user_input):
+class StateSyncManager:
+    def __init__(self):
+        self.clients = set()
+        self.queue = queue.Queue()
+
+    def push(self, data):
+        self.queue.put(data)
+
+    async def handler(self, websocket):
+        self.clients.add(websocket)
+        try:
+            await websocket.wait_closed()
+        except Exception as e:
+            print(f"WebSocket error: {e}")
+        finally:
+            self.clients.remove(websocket)
+
+    async def sender_loop(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            data = await loop.run_in_executor(None, self.queue.get)
+            if self.clients:
+                msg = json.dumps(data)
+                await asyncio.gather(*(ws.send(msg) for ws in self.clients))
+
+    async def run(self):
+        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
+            await self.sender_loop()
+
+def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input,USER)    # [{'memory': str, 'score': datetime}, ...]
     assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
     user_stm = MEMORY.search_stm(USER)               # [{"memory": str, "timestamp": datetime}, ...]
@@ -232,35 +261,6 @@ def handle_user_input():
         },
         priority="high"
     )
-
-class StateSyncManager:
-    def __init__(self):
-        self.clients = set()
-        self.queue = queue.Queue()
-
-    def push(self, data):
-        self.queue.put(data)
-
-    async def handler(self, websocket):
-        self.clients.add(websocket)
-        try:
-            await websocket.wait_closed()
-        except Exception as e:
-            print(f"WebSocket error: {e}")
-        finally:
-            self.clients.remove(websocket)
-
-    async def sender_loop(self):
-        loop = asyncio.get_running_loop()
-        while True:
-            data = await loop.run_in_executor(None, self.queue.get)
-            if self.clients:
-                msg = json.dumps(data)
-                await asyncio.gather(*(ws.send(msg) for ws in self.clients))
-
-    async def run(self):
-        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
-            await self.sender_loop()
 
 def llm_worker():
     while True:
@@ -366,7 +366,7 @@ def tts_worker():
 
 async def main_loop():
     while True:
-        await asyncio.sleep(1)
+        await asyncio.Event().wait()
 
 if __name__ == '__main__':
     llm_queue = None
