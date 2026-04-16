@@ -1,6 +1,7 @@
 from typing import Any, Literal
 import websockets
 import threading
+import datetime
 import keyboard
 import asyncio
 import queue
@@ -11,7 +12,7 @@ from core.tts.client import TTSClient
 from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
-from core.prompts.manager import PromptManager
+from core.prompts.manager import PromptBuilder
 from core.tools.registry import ToolRegistry
 
 from core.common.config import ConfigManager
@@ -268,9 +269,19 @@ def llm_worker():
         if task is None:
             break
         STATE.agent.is_silent = False
-        system_prompt = PROMPT.render({
-            "memory": STATE.agent.memory
+
+        system_prompt = PROMPT.build({
+            "system.md": {},
+            "personality.md": {},
+            "memory.md": {
+                "memory": STATE.agent.memory,
+            },
+            "runtime_state.md": {
+                "current_time": datetime.datetime.now(),
+                "unread_events": None
+            }
         })
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "name": task['source'], "content": task['input']}
@@ -379,7 +390,7 @@ if __name__ == '__main__':
         TTS = TTSClient()
         STT = STTClient()
         MEMORY = MemoryManager()
-        PROMPT = PromptManager()
+        PROMPT = PromptBuilder()
         TOOLS = ToolRegistry()
 
         STATE = State()

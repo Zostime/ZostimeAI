@@ -12,7 +12,7 @@ class ToolRegistry:
         self.tools: List[Dict] = []
         self.tool_map: Dict[str, Callable] = {}
         self.tools_dir = os.path.dirname(__file__)
-        self.disabled_tools = ["minecraft"]
+        self.disabled_tools = ["get_current_time", "minecraft"]
         self._load_tools()
 
     def _load_tools(self):
