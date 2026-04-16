@@ -15,6 +15,7 @@ core/tools/*
 !core/tools/__init__.py
 !core/tools/registry.py
 !core/tools/get_current_time
+!core/tools/sound_board
 
 #.env
 Files/config/.env
