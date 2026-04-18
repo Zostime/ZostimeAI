@@ -29,6 +29,7 @@ class State:
         def __init__(self):
             self.memory: str = "无相关记忆"
             self.is_silent: bool = True
+            self.unread_events: dict = {}
 
     class Env:
         def __init__(self):
@@ -44,10 +45,6 @@ class State:
         self.env = State.Env()
 
         self._lock = threading.Lock()
-
-    def update_memory(self, memory: dict):
-        with self._lock:
-            self.agent.memory = memory
 
 class EventManager:
     PRIORITY_MAP = {
@@ -112,7 +109,7 @@ class EventHandler:
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-        STATE.update_memory(build_memory_context(data['input']))
+        STATE.agent.memory=build_memory_context(data['input'])
 
         STATE.env.input={
             "content": data['input'],
@@ -278,7 +275,7 @@ def llm_worker():
             },
             "runtime_state.md": {
                 "current_time": datetime.datetime.now(),
-                "unread_events": None
+                "unread_events": STATE.agent.unread_events,
             }
         })
 
@@ -365,6 +362,7 @@ def llm_worker():
         finally:
             STATE.env.is_speaking = False
             STATE.agent.is_silent = True
+            STATE.agent.unread_events = {}  #清空未读消息
 
 def tts_worker():
     while True:
