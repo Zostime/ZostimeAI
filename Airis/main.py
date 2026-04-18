@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Any, Literal
 import websockets
 import threading
@@ -20,9 +21,9 @@ from core.common.logger import LogManager
 
 #配置
 USER = "Zostime"
-ENABLE_STT = True
+ENABLE_STT = False
 ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
-WEBSOCKET_PORT = 8090
+WEBSOCKET_PORT = 9000
 
 class State:
     class Agent:
@@ -128,6 +129,45 @@ class EventHandler:
         TTS.interrupt()
         STATE.agent.is_silent = True
 
+class EventBus:
+    def __init__(self):
+        self.clients = defaultdict(set)
+        self.queue = queue.Queue()
+
+    async def handler(self, websocket):
+        path = websocket.path.lstrip("/")
+        self.clients[path].add(websocket)
+        try:
+            async for msg in websocket:
+                data = json.loads(msg)  # noqa
+
+                if path == "states":
+                    pass
+
+                elif path == "tool":
+                    pass
+
+        except Exception as e:
+            print(f"WebSocket error on {path}: {e}")
+        finally:
+            self.clients[path].remove(websocket)
+
+    async def run(self):
+        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
+            await self.sender_loop()
+
+    async def sender_loop(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            path, data = await loop.run_in_executor(None, self.queue.get)
+            clients = self.clients.get(path, set())
+            if clients:
+                msg = json.dumps(data)
+                await asyncio.gather(*(ws.send(msg) for ws in clients))
+
+    def push(self, path: str, data: Any):
+        self.queue.put((path,data))
+
 class InterruptManager:
     def __init__(self):
         self.event = threading.Event()
@@ -157,35 +197,6 @@ class InterruptManager:
                 keyboard.wait("ctrl+f1")
                 self.trigger()
                 handle_user_input()
-
-class StateSyncManager:
-    def __init__(self):
-        self.clients = set()
-        self.queue = queue.Queue()
-
-    def push(self, data):
-        self.queue.put(data)
-
-    async def handler(self, websocket):
-        self.clients.add(websocket)
-        try:
-            await websocket.wait_closed()
-        except Exception as e:
-            print(f"WebSocket error: {e}")
-        finally:
-            self.clients.remove(websocket)
-
-    async def sender_loop(self):
-        loop = asyncio.get_running_loop()
-        while True:
-            data = await loop.run_in_executor(None, self.queue.get)
-            if self.clients:
-                msg = json.dumps(data)
-                await asyncio.gather(*(ws.send(msg) for ws in self.clients))
-
-    async def run(self):
-        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
-            await self.sender_loop()
 
 def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input,USER)    # [{'memory': str, 'score': datetime}, ...]
@@ -297,7 +308,9 @@ def llm_worker():
                             break
                         chunk = next(gen)
                         print(chunk, end='', flush=True)
-                        SYNC.push({
+                        EVENT_BUS.push(
+                        path="states",
+                        data={
                             "type": "llm_stream",
                             "data": chunk
                         })
@@ -345,7 +358,9 @@ def llm_worker():
                         "content": str(output)
                     })
 
-                    SYNC.push({
+                    EVENT_BUS.push(
+                        path="states",
+                        data={
                         "type": "tool_call",
                         "data": tool_call["name"]
                     })
@@ -397,11 +412,11 @@ if __name__ == '__main__':
         EVENT.on("interrupt", EventHandler.interrupt_handler)
 
         INTERRUPT = InterruptManager()
-        SYNC = StateSyncManager()
+        EVENT_BUS = EventBus()
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
-        threading.Thread(target=lambda: asyncio.run(SYNC.run()), daemon=True).start()
+        threading.Thread(target=lambda: asyncio.run(EVENT_BUS.run()), daemon=True).start()
 
         asyncio.run(main_loop())
 
