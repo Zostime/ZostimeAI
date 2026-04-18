@@ -20,7 +20,7 @@ from core.common.logger import LogManager
 
 #配置
 USER = "Zostime"
-ENABLE_STT = False
+ENABLE_STT = True
 ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
 WEBSOCKET_PORT = 8090
 
@@ -111,7 +111,7 @@ class EventHandler:
         data = event["data"]
         STATE.agent.memory=build_memory_context(data['input'])
 
-        STATE.env.input={
+        STATE.env.input = {
             "content": data['input'],
             "source": data['source'],
             "timestamp": time.time()
@@ -237,6 +237,7 @@ def build_memory_context(user_input) -> str:
     return "\n".join(parts)
 
 def handle_user_input():
+    STATE.env.is_speaking = True
     print()
     if ENABLE_STT:
         while True:
@@ -249,7 +250,6 @@ def handle_user_input():
                 time.sleep(1)
     else:
         user_input = input(f"{USER}:")
-    STATE.env.is_speaking = True
 
     EVENT.add_event(
         event_type="input",
@@ -265,8 +265,6 @@ def llm_worker():
         task = llm_queue.get()
         if task is None:
             break
-        STATE.agent.is_silent = False
-
         system_prompt = PROMPT.build({
             "system.md": {},
             "personality.md": {},
@@ -284,6 +282,7 @@ def llm_worker():
             {"role": "user", "name": task['source'], "content": task['input']}
         ]
         result = None
+        STATE.agent.is_silent = False
         try:
             while True:
                 gen = LLM.chat_stream(
@@ -378,8 +377,9 @@ async def main_loop():
         await asyncio.Event().wait()
 
 if __name__ == '__main__':
-    llm_queue = None
-    tts_queue = None
+    llm_queue = queue.Queue()
+    tts_queue = queue.Queue()
+
     try:
         CONFIG = ConfigManager()
         LOGGER = LogManager("system")
@@ -398,9 +398,6 @@ if __name__ == '__main__':
 
         INTERRUPT = InterruptManager()
         SYNC = StateSyncManager()
-
-        llm_queue = queue.Queue()
-        tts_queue = queue.Queue()
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()

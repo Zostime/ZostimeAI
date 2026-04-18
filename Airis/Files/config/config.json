@@ -14,7 +14,7 @@
     "volume": "+0%"
   },
   "stt": {
-    "model": "medium",
+    "model": "turbo",
     "models_dir": "Files/models/whisper",
     "language": "zh",
     "prompt": "Zostime,Airis",
