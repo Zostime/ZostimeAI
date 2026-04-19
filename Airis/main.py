@@ -133,22 +133,25 @@ class EventBus:
     def __init__(self):
         self.clients = defaultdict(set)
         self.queue = queue.Queue()
+        self.handlers = {}
+
+    def on(self, path: str, handler):
+        self.handlers[path] = handler
 
     async def handler(self, websocket):
         path = websocket.path.lstrip("/")
         self.clients[path].add(websocket)
         try:
             async for msg in websocket:
-                data = json.loads(msg)  # noqa
+                data = json.loads(msg)
 
-                if path == "states":
-                    pass
+                if path in self.handlers:
+                    handler = self.handlers[path]
 
-                elif path == "tool":
-                    pass
-
-        except Exception as e:
-            print(f"WebSocket error on {path}: {e}")
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler(data)
+                    else:
+                        handler(data)
         finally:
             self.clients[path].remove(websocket)
 
@@ -161,12 +164,31 @@ class EventBus:
         while True:
             path, data = await loop.run_in_executor(None, self.queue.get)
             clients = self.clients.get(path, set())
-            if clients:
-                msg = json.dumps(data)
-                await asyncio.gather(*(ws.send(msg) for ws in clients))
+            if not clients:
+                continue
 
-    def push(self, path: str, data: Any):
+            msg = json.dumps(data)
+            tasks = [ws.send(msg) for ws in clients]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            to_remove = []
+            for ws, result in zip(clients, results):
+                if isinstance(result, Exception):
+                    to_remove.append(ws)
+            for ws in to_remove:
+                clients.discard(ws)
+
+    def publish(self, path: str, data: Any):
         self.queue.put((path,data))
+
+class EventRouter:
+    @staticmethod
+    def state(data):
+        pass
+
+    @staticmethod
+    def tool(data):
+        pass
 
 class InterruptManager:
     def __init__(self):
@@ -308,8 +330,8 @@ def llm_worker():
                             break
                         chunk = next(gen)
                         print(chunk, end='', flush=True)
-                        EVENT_BUS.push(
-                        path="states",
+                        EVENT_BUS.publish(
+                        path="state",
                         data={
                             "type": "llm_stream",
                             "data": chunk
@@ -358,8 +380,8 @@ def llm_worker():
                         "content": str(output)
                     })
 
-                    EVENT_BUS.push(
-                        path="states",
+                    EVENT_BUS.publish(
+                        path="state",
                         data={
                         "type": "tool_call",
                         "data": tool_call["name"]
@@ -413,6 +435,8 @@ if __name__ == '__main__':
 
         INTERRUPT = InterruptManager()
         EVENT_BUS = EventBus()
+        EVENT_BUS.on("state", EventRouter.state)
+        EVENT_BUS.on("tool", EventRouter.tool)
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
