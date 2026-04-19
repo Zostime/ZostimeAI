@@ -143,7 +143,11 @@ class EventBus:
         self.clients[path].add(websocket)
         try:
             async for msg in websocket:
-                data = json.loads(msg)
+                try:
+                    data = json.loads(msg)
+                except json.JSONDecodeError:
+                    LOGGER.logger.warning(f"Invalid JSON from {path}: {msg}")
+                    continue
 
                 if path in self.handlers:
                     handler = self.handlers[path]
