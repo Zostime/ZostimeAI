@@ -194,6 +194,10 @@ class EventRouter:
     def tool(data):
         pass
 
+    @staticmethod
+    def game(data):
+        pass
+
 class InterruptManager:
     def __init__(self):
         self.event = threading.Event()
@@ -441,6 +445,7 @@ if __name__ == '__main__':
         EVENT_BUS = EventBus()
         EVENT_BUS.on("state", EventRouter.state)
         EVENT_BUS.on("tool", EventRouter.tool)
+        EVENT_BUS.on("game", EventRouter.game)
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()

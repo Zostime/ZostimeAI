@@ -45,6 +45,8 @@ Airis/
 │   └─memories/           
 │       ├─short_term      
 │       └─long_term  
+├─server/                  # 外部服务
+│   └─...       
 ├─.venv/                   # Python虚拟环境
 ├─main.py                  # 程序主入口
 └─requirements.txt         # 项目依赖

@@ -45,6 +45,8 @@ Airis/
 │   └─memories/           
 │       ├─short_term      
 │       └─long_term  
+├─server/                  # External services
+│   └─... 
 ├─.venv/                   # Python virtual environment
 ├─main.py                  # Program entry point
 └─requirements.txt         # Project dependencies
