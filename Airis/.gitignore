@@ -19,7 +19,6 @@ core/tools/*
 
 #server
 server/*
-!server/websocket
 
 #.env
 Files/config/.env

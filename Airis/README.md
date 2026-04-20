@@ -6,6 +6,9 @@
 ## File structure
 ```
 Airis/
+├─airis_sdk/               # SDK
+│   ├─__init__.py    
+│   └─websocket.py     
 ├─core/                    # Core
 │   ├─__init__.py     
 │   ├─common/              # Public module

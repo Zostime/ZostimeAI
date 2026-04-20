@@ -6,6 +6,9 @@
 ## 文件结构
 ```
 Airis/
+├─airis_sdk/               # SDK
+│   ├─__init__.py    
+│   └─websocket.py     
 ├─core/                    # 核心
 │   ├─__init__.py    
 │   ├─common/              # 公共模块
