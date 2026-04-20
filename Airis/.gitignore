@@ -17,6 +17,10 @@ core/tools/*
 !core/tools/get_current_time
 !core/tools/sound_board
 
+#server
+server/*
+!server/websocket
+
 #.env
 Files/config/.env
 !Files/config/.env.example

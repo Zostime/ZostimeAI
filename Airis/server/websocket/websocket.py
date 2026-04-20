@@ -19,14 +19,11 @@ class Action:
     description: str
     schema: Optional[Dict[str, Any]] = None
 
-    def json(self) -> str:
-        result = {
-            "name": self.name,
-            "description": self.description,
-        }
+    def to_dict(self) -> Dict[str, Any]:
+        result = {"name": self.name, "description": self.description}
         if self.schema is not None:
             result["schema"] = self.schema
-        return json.dumps(result)
+        return result
 
 class Websocket:
     def __init__(self):
@@ -34,6 +31,7 @@ class Websocket:
         self.ws = None
         self.game_name = None
         self._action_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._callback_is_async: bool = False
         self._listen_task: Optional[asyncio.Task] = None
 
     async def startup(self, game_name: str) -> None:
@@ -171,7 +169,7 @@ class Websocket:
 
         await self.ws.send(json.dumps(message))
 
-    async def on_action(self, callback) -> None:
+    def on_action(self, callback) -> None:
         """
         注册一个回调函数，用于处理服务器下发的 action 命令。
 
@@ -184,6 +182,7 @@ class Websocket:
         """
 
         self._action_callback = callback
+        self._callback_is_async = asyncio.iscoroutinefunction(callback)
 
     async def _listen(self) -> None:
         """
@@ -197,10 +196,18 @@ class Websocket:
                     continue
 
                 if data.get("command") == "action":
-                    if self._action_callback:
-                        action_payload = data["data"]
+                    cb = self._action_callback
+                    is_async = self._callback_is_async
+
+                    if cb is None:
+                        continue
+
+                    payload = data["data"]
+                    if is_async:
+                        await cb(payload) # noqa
+                    else:
                         loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, self._action_callback, action_payload)
+                        await loop.run_in_executor(None, cb, payload)
         except websockets.ConnectionClosed:
             pass
         except asyncio.CancelledError:
