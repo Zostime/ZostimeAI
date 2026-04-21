@@ -1,5 +1,6 @@
+from websockets.server import WebSocketServerProtocol # noqa
+from typing import Any, Literal, Optional, Dict
 from collections import defaultdict
-from typing import Any, Literal
 import websockets
 import threading
 import datetime
@@ -131,72 +132,128 @@ class EventHandler:
 
 class EventBus:
     def __init__(self):
-        self.clients = defaultdict(set)
-        self.queue = queue.Queue()
+        self.clients = defaultdict(dict)
+        self.queue = asyncio.Queue()
         self.handlers = {}
+        self._loop = None
 
     def on(self, path: str, handler):
         self.handlers[path] = handler
 
-    async def handler(self, websocket):
-        path = websocket.path.lstrip("/")
-        self.clients[path].add(websocket)
-        try:
-            async for msg in websocket:
-                try:
-                    data = json.loads(msg)
-                except json.JSONDecodeError:
-                    LOGGER.logger.warning(f"Invalid JSON from {path}: {msg}")
-                    continue
-
-                if path in self.handlers:
-                    handler = self.handlers[path]
-
-                    if asyncio.iscoroutinefunction(handler):
-                        await handler(data)
-                    else:
-                        handler(data)
-        finally:
-            self.clients[path].remove(websocket)
-
     async def run(self):
-        async with websockets.serve(self.handler, "localhost", WEBSOCKET_PORT):
-            await self.sender_loop()
+        self._loop = asyncio.get_running_loop()
+        async with websockets.serve(self._connection_handler, "localhost", WEBSOCKET_PORT):
+            await self._sender_loop()
 
-    async def sender_loop(self):
-        loop = asyncio.get_running_loop()
+    async def _connection_handler(self, websocket: WebSocketServerProtocol):
+        path = websocket.path.lstrip("/")
+        client_id = id(websocket)
+        self.clients[path][client_id] = websocket
+
+        try:
+            if path in self.handlers:
+                await self.handlers[path](websocket, client_id)
+        except Exception:  # noqa
+            pass
+        finally:
+            self.clients[path].pop(client_id, None)
+
+    async def publish_async(self, path: str, data: Any, client_id: int = None):
+        await self.queue.put((path, client_id, data))
+
+    def publish(self, path: str, data: Any, client_id: int = None):
+        if self._loop is None:
+            raise RuntimeError("Event loop not ready")
+        asyncio.run_coroutine_threadsafe(
+            self.queue.put((path, client_id, data)),
+            self._loop
+        )
+
+    async def _sender_loop(self):
         while True:
-            path, data = await loop.run_in_executor(None, self.queue.get)
-            clients = self.clients.get(path, set())
-            if not clients:
-                continue
+            path, client_id, data = await self.queue.get()
+
+            targets = []
+
+            if client_id is not None:
+                ws = self.clients.get(path, {}).get(client_id)
+                if ws:
+                    targets.append(ws)
+            else:
+                targets = list(self.clients.get(path, {}).values())
 
             msg = json.dumps(data)
-            tasks = [ws.send(msg) for ws in clients]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            to_remove = []
-            for ws, result in zip(clients, results):
-                if isinstance(result, Exception):
-                    to_remove.append(ws)
-            for ws in to_remove:
-                clients.discard(ws)
-
-    def publish(self, path: str, data: Any):
-        self.queue.put((path,data))
+            for ws in targets:
+                try:
+                    await ws.send(msg)
+                except:  # noqa
+                    pass
 
 class EventRouter:
-    @staticmethod
-    def state(data):
-        pass
+    class State:
+        @staticmethod
+        async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
+            await asyncio.Event().wait()
 
-    @staticmethod
-    def tool(data):
-        pass
+    class Tool:
+        @staticmethod
+        async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
+            await asyncio.Event().wait()
 
-    @staticmethod
-    def game(data):
-        pass
+    class Game:
+        sessions: Dict[int, 'EventRouter.Game.Session'] = {}  # client_id -> Session
+
+        class Session:
+            def __init__(self, client_id: int, websocket: WebSocketServerProtocol):
+                self.client_id = client_id
+                self.websocket = websocket
+                self.game_name: Optional[str] = None
+                self.registered_actions: list = []
+                self.pending_action_id: Optional[str] = None
+                self.pending_future: Optional[asyncio.Future] = None
+
+        @staticmethod
+        async def handle(websocket: WebSocketServerProtocol, client_id: int):
+            session = EventRouter.Game.Session(client_id, websocket)
+            EventRouter.Game.sessions[client_id] = session
+
+            try:
+                async for raw_msg in websocket:
+                    try:
+                        data = json.loads(raw_msg)
+                    except json.JSONDecodeError:
+                        LOGGER.logger.warning(f"Invalid JSON: {raw_msg}")
+                        continue
+                    await EventRouter.Game._handle_message(session, data)
+            except websockets.ConnectionClosed:
+                pass
+            finally:
+                EventRouter.Game.sessions.pop(client_id, None)
+
+        @staticmethod
+        async def _handle_message(session, message):
+            command = message.get("command")
+            data = message.get("data")
+            game = message.get("game")
+
+            if command == "startup":
+                session.game_name = game
+
+            elif command == "actions/register":
+                session.registered_actions.extend(data.get("actions"))
+
+            elif command == "actions/unregister":
+                names = data.get("action_names")
+                session.registered_actions = [
+                    a for a in session.registered_actions if a["name"] not in names
+                ]
+
+            elif command == "actions/force":
+                pass
+
+            elif command == "action/result":
+                pass
 
 class InterruptManager:
     def __init__(self):
@@ -443,9 +500,9 @@ if __name__ == '__main__':
 
         INTERRUPT = InterruptManager()
         EVENT_BUS = EventBus()
-        EVENT_BUS.on("state", EventRouter.state)
-        EVENT_BUS.on("tool", EventRouter.tool)
-        EVENT_BUS.on("game", EventRouter.game)
+        EVENT_BUS.on("state", EventRouter.State.handle)
+        EVENT_BUS.on("tool", EventRouter.Tool.handle)
+        EVENT_BUS.on("game", EventRouter.Game.handle)
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
