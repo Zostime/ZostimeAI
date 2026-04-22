@@ -1,5 +1,5 @@
 """
-参考了Neuro API
+参考了 Neuro API
 https://github.com/VedalAI/neuro-sdk/blob/main/API/SPECIFICATION.md
 """
 
@@ -38,6 +38,7 @@ class Websocket:
         self._action_callback: Optional[Callable[[Dict[str, Any]], None]] = None
         self._callback_is_async: bool = False
         self._listen_task: Optional[asyncio.Task] = None
+        self._pending_action: Optional[asyncio.Future] = None
 
     async def startup(self, game_name: str) -> None:
         """
@@ -201,18 +202,18 @@ class Websocket:
                     continue
 
                 if data.get("command") == "action":
-                    cb = self._action_callback
-                    is_async = self._callback_is_async
+                    payload = data["data"]
 
-                    if cb is None:
+                    if self._pending_action and not self._pending_action.done():
+                        self._pending_action.set_result(payload)
                         continue
 
-                    payload = data["data"]
-                    if is_async:
-                        await cb(payload) # noqa
-                    else:
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, cb, payload)
+                    if self._action_callback:
+                        if self._callback_is_async:
+                            await self._action_callback(payload) # noqa
+                        else:
+                            loop = asyncio.get_running_loop()
+                            await loop.run_in_executor(None, self._action_callback, payload)
         except websockets.ConnectionClosed:
             pass
         except asyncio.CancelledError:

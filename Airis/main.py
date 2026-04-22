@@ -15,7 +15,6 @@ from core.stt.client import STTClient
 from core.llm.client import LLMClient
 from core.memory.manager import MemoryManager
 from core.prompts.manager import PromptBuilder
-from core.tools.registry import ToolRegistry
 
 from core.common.config import ConfigManager
 from core.common.logger import LogManager
@@ -45,8 +44,6 @@ class State:
     def __init__(self):
         self.agent = State.Agent()
         self.env = State.Env()
-
-        self._lock = threading.Lock()
 
 class EventManager:
     PRIORITY_MAP = {
@@ -135,13 +132,13 @@ class EventBus:
         self.clients = defaultdict(dict)
         self.queue = asyncio.Queue()
         self.handlers = {}
-        self._loop = None
+        self.loop = None
 
     def on(self, path: str, handler):
         self.handlers[path] = handler
 
     async def run(self):
-        self._loop = asyncio.get_running_loop()
+        self.loop = asyncio.get_running_loop()
         async with websockets.serve(self._connection_handler, "localhost", WEBSOCKET_PORT):
             await self._sender_loop()
 
@@ -162,11 +159,11 @@ class EventBus:
         await self.queue.put((path, client_id, data))
 
     def publish(self, path: str, data: Any, client_id: int = None):
-        if self._loop is None:
+        if self.loop is None:
             raise RuntimeError("Event loop not ready")
         asyncio.run_coroutine_threadsafe(
             self.queue.put((path, client_id, data)),
-            self._loop
+            self.loop
         )
 
     async def _sender_loop(self):
@@ -203,11 +200,6 @@ class EventRouter:
                 data = data
             )
 
-    class Tool:
-        @staticmethod
-        async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
-            async for msg in websocket: pass  # noqa
-
     class Game:
         sessions: Dict[int, 'EventRouter.Game.Session'] = {}  # client_id -> Session
 
@@ -218,7 +210,7 @@ class EventRouter:
                 self.game_name: Optional[str] = None
                 self.registered_actions: list = []
                 self.pending_action_id: Optional[str] = None
-                self.pending_future: Optional[asyncio.Future] = None
+                self.pending_actions: Dict[str, asyncio.Future] = {}
 
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int):
@@ -260,7 +252,29 @@ class EventRouter:
                 pass
 
             elif command == "action/result":
-                pass
+                action_id = data.get("id")
+                if not action_id:
+                    return
+                future = session.pending_actions.pop(action_id, None)
+                if future and not future.done():
+                    future.set_result(data)
+
+        @staticmethod
+        async def run_action(session, data):
+            action_id = data["data"]["id"]
+
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+
+            session.pending_actions[action_id] = future
+
+            await EVENT_BUS.publish_async(
+                path="game",
+                client_id=session.client_id,
+                data=data
+            )
+
+            return await future
 
 class InterruptManager:
     def __init__(self):
@@ -390,9 +404,23 @@ def llm_worker():
         STATE.agent.is_silent = False
         try:
             while True:
+                tools = []
+                for session in EventRouter.Game.sessions.values():
+                    for action in session.registered_actions:
+                        tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": f"{session.client_id}_{action['name']}",
+                                "description": action["description"],
+                                "parameters": action.get("schema") or {
+                                    "type": "object",
+                                    "properties": {}
+                                }
+                            }
+                        })
                 gen = LLM.chat_stream(
                     messages=messages,
-                    tools=TOOLS.get_tools() if ENABLE_TOOLS else None,
+                    tools=tools if ENABLE_TOOLS else None,
                     tool_choice="auto"
                 )
                 while True:
@@ -442,10 +470,27 @@ def llm_worker():
                     if INTERRUPT.is_interrupted():
                         break
                     try:
-                        output = TOOLS.run_tool(tool_call)
+                        session_id, real_name = tool_call["name"].split("_", 1)
+                        session = EventRouter.Game.sessions[int(session_id)]
+                        future = asyncio.run_coroutine_threadsafe(
+                            EventRouter.Game.run_action(
+                                session=session,
+                                data={
+                                    "command": "action",
+                                    "data": {
+                                        "id": tool_call["id"],
+                                        "name": real_name,
+                                        "data": json.dumps(tool_call.get("arguments", {}))
+                                    }
+                                }
+                            ),
+                            EVENT_BUS.loop
+                        )
+                        result = future.result()
+                        output = result.get("message", "")
+
                     except Exception as e:
                         output = f"工具执行失败:{e}"
-
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
@@ -498,7 +543,6 @@ if __name__ == '__main__':
         STT = STTClient()
         MEMORY = MemoryManager()
         PROMPT = PromptBuilder()
-        TOOLS = ToolRegistry()
 
         STATE = State()
         EVENT = EventManager()
@@ -508,7 +552,6 @@ if __name__ == '__main__':
         INTERRUPT = InterruptManager()
         EVENT_BUS = EventBus()
         EVENT_BUS.on("state", EventRouter.State.handle)
-        EVENT_BUS.on("tool", EventRouter.Tool.handle)
         EVENT_BUS.on("game", EventRouter.Game.handle)
 
         threading.Thread(target=llm_worker, daemon=True).start()
