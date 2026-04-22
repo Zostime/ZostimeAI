@@ -194,12 +194,19 @@ class EventRouter:
     class State:
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
-            await asyncio.Event().wait()
+            async for msg in websocket: pass # noqa
+
+        @staticmethod
+        def emit(data: Any):
+            EVENT_BUS.publish(
+                path = "state",
+                data = data
+            )
 
     class Tool:
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
-            await asyncio.Event().wait()
+            async for msg in websocket: pass  # noqa
 
     class Game:
         sessions: Dict[int, 'EventRouter.Game.Session'] = {}  # client_id -> Session
@@ -395,12 +402,12 @@ def llm_worker():
                             break
                         chunk = next(gen)
                         print(chunk, end='', flush=True)
-                        EVENT_BUS.publish(
-                        path="state",
-                        data={
-                            "type": "llm_stream",
-                            "data": chunk
-                        })
+                        EventRouter.State.emit(
+                            data={
+                                "type": "llm_stream",
+                                "data": chunk
+                            }
+                        )
                     except StopIteration as e:
                         result = e.value
                         tts_queue.put(result['full_content'])
@@ -445,12 +452,12 @@ def llm_worker():
                         "content": str(output)
                     })
 
-                    EVENT_BUS.publish(
-                        path="state",
-                        data={
-                        "type": "tool_call",
-                        "data": tool_call["name"]
-                    })
+                    EventRouter.State.emit(
+                            data={
+                            "type": "tool_call",
+                            "data": tool_call["name"]
+                        }
+                    )
                 if INTERRUPT.is_interrupted():
                     break
 
