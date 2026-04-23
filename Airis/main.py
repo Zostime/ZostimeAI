@@ -30,7 +30,7 @@ class State:
         def __init__(self):
             self.memory: str = "无相关记忆"
             self.is_silent: bool = True
-            self.unread_events: dict = {}
+            self.unread_events: list = []
 
     class Env:
         def __init__(self):
@@ -239,6 +239,14 @@ class EventRouter:
             if command == "startup":
                 session.game_name = game
 
+            elif command == "context":
+                message = data.get("message", "")
+                silent = data.get("silent", True)
+                if silent:
+                    STATE.agent.unread_events.append(f"来自{game}的msg:{message}")
+                else:
+                    STATE.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
+
             elif command == "actions/register":
                 session.registered_actions.extend(data.get("actions"))
 
@@ -405,12 +413,16 @@ def llm_worker():
         try:
             while True:
                 tools = []
+                tool_map = {}
+
                 for session in EventRouter.Game.sessions.values():
                     for action in session.registered_actions:
+                        safe_name = f"{session.client_id}_{action['name']}"
+
                         tools.append({
                             "type": "function",
                             "function": {
-                                "name": f"{session.client_id}_{action['name']}",
+                                "name": safe_name,
                                 "description": action["description"],
                                 "parameters": action.get("schema") or {
                                     "type": "object",
@@ -418,6 +430,8 @@ def llm_worker():
                                 }
                             }
                         })
+
+                        tool_map[safe_name] = (session, action["name"])
                 gen = LLM.chat_stream(
                     messages=messages,
                     tools=tools if ENABLE_TOOLS else None,
@@ -470,8 +484,8 @@ def llm_worker():
                     if INTERRUPT.is_interrupted():
                         break
                     try:
-                        session_id, real_name = tool_call["name"].split("_", 1)
-                        session = EventRouter.Game.sessions[int(session_id)]
+                        session, real_name = tool_map[tool_call["name"]]
+
                         future = asyncio.run_coroutine_threadsafe(
                             EventRouter.Game.run_action(
                                 session=session,
@@ -490,7 +504,7 @@ def llm_worker():
                         output = result.get("message", "")
 
                     except Exception as e:
-                        output = f"工具执行失败:{e}"
+                        output = f"工具执行失败: {e}"
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
@@ -508,14 +522,14 @@ def llm_worker():
 
             MEMORY.add_memory(task['input'], user_id=task['source'])
 
-        except Exception as e:  # noqa
+        except Exception as e:
             print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
             tts_queue.put("Someone tell Zostime there is a problem with my AI.")
-            LOGGER.logger.error(f"处理请求时发生未知错误: {e}", exc_info=True)
+            LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
             STATE.env.is_speaking = False
             STATE.agent.is_silent = True
-            STATE.agent.unread_events = {}  #清空未读消息
+            STATE.agent.unread_events = []  # 清空未读消息
 
 def tts_worker():
     while True:
