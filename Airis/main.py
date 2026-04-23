@@ -150,6 +150,8 @@ class EventBus:
         try:
             if path in self.handlers:
                 await self.handlers[path](websocket, client_id)
+        except websockets.ConnectionClosed:
+            LOGGER.logger.debug(f"[websocket] {client_id} -> {path} connection closed.")
         except Exception:  # noqa
             pass
         finally:
@@ -540,10 +542,6 @@ def tts_worker():
         TTS.stream_tts(text)
         STATE.agent.is_silent = True
 
-async def main_loop():
-    while True:
-        await asyncio.Event().wait()
-
 if __name__ == '__main__':
     llm_queue = queue.Queue()
     tts_queue = queue.Queue()
@@ -572,7 +570,7 @@ if __name__ == '__main__':
         threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=lambda: asyncio.run(EVENT_BUS.run()), daemon=True).start()
 
-        asyncio.run(main_loop())
+        threading.Event().wait() # loop
 
     except KeyboardInterrupt:
         if llm_queue is not None and tts_queue is not None:
