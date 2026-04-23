@@ -210,7 +210,7 @@ class EventRouter:
                 self.client_id = client_id
                 self.websocket = websocket
                 self.game_name: Optional[str] = None
-                self.registered_actions: list = []
+                self.registered_actions: dict = {}
                 self.pending_action_id: Optional[str] = None
                 self.pending_actions: Dict[str, asyncio.Future] = {}
 
@@ -249,14 +249,15 @@ class EventRouter:
                 else:
                     STATE.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
 
+
             elif command == "actions/register":
-                session.registered_actions.extend(data.get("actions"))
+                for act in data.get("actions", []):
+                    session.registered_actions[act["name"]] = act
+
 
             elif command == "actions/unregister":
-                names = data.get("action_names")
-                session.registered_actions = [
-                    a for a in session.registered_actions if a["name"] not in names
-                ]
+                for name in data.get("action_names", []):
+                    session.registered_actions.pop(name, None)
 
             elif command == "actions/force":
                 pass
@@ -418,7 +419,7 @@ def llm_worker():
                 tool_map = {}
 
                 for session in EventRouter.Game.sessions.values():
-                    for action in session.registered_actions:
+                    for action in session.registered_actions.values():
                         safe_name = f"{session.client_id}_{action['name']}"
 
                         tools.append({
