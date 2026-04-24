@@ -213,6 +213,8 @@ class EventRouter:
                 self.registered_actions: dict = {}
                 self.pending_action_id: Optional[str] = None
                 self.pending_actions: Dict[str, asyncio.Future] = {}
+                self.forced_action_names: list = []
+                self.force_payload: Optional[dict] = None
 
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int):
@@ -249,7 +251,6 @@ class EventRouter:
                 else:
                     STATE.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
 
-
             elif command == "actions/register":
                 for act in data.get("actions", []):
                     session.registered_actions[act["name"]] = act
@@ -259,7 +260,28 @@ class EventRouter:
                     session.registered_actions.pop(name, None)
 
             elif command == "actions/force":
-                pass
+                query = data.get("query", "")
+                action_names = data.get("action_names", [])
+                state = data.get("state", "")
+                priority = data.get("priority", "low")
+                ephemeral_context = data.get("ephemeral_context", True)
+
+                session.forced_action_names = action_names
+                if not ephemeral_context:
+                    session.force_payload = {
+                        "query": query,
+                        "state": state
+                    }
+                    STATE.agent.unread_events.append(f"来自{game}的[force]:{session.force_payload}")
+
+                EVENT.add_event(
+                    event_type="input",
+                    data={
+                        "source": game,
+                        "input": query
+                    },
+                    priority=priority
+                )   # 触发LLM
 
             elif command == "action/result":
                 action_id = data.get("id")
@@ -422,6 +444,8 @@ def llm_worker():
             while True:
                 tools = []
                 tool_map = {}
+                tool_choice = "auto"
+                forced_tools = []
 
                 for session in EventRouter.Game.sessions.values():
                     for action in session.registered_actions.values():
@@ -440,10 +464,18 @@ def llm_worker():
                         })
 
                         tool_map[safe_name] = (session, action["name"])
+
+                    for name in session.forced_action_names:
+                        safe_name = f"{session.client_id}_{name}"
+                        forced_tools.append(safe_name)
+
+                if forced_tools:
+                    tool_choice = "required"
+
                 gen = LLM.chat_stream(
                     messages=messages,
                     tools=tools if ENABLE_TOOLS else None,
-                    tool_choice="auto"
+                    tool_choice = tool_choice
                 )
                 while True:
                     try:
@@ -509,6 +541,11 @@ def llm_worker():
                             EVENT_BUS.loop
                         )
                         result = future.result()
+                        if result.get("success"):
+                            session.forced_action_names.clear()
+                            session.force_payload = None
+                        else:
+                            pass
                         output = result.get("message", "")
 
                     except Exception as e:
