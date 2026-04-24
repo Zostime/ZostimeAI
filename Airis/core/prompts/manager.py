@@ -2,7 +2,7 @@
 SystemPrompt: static + ChatHistoryPrompt: dynamic + RuntimeStatePrompt: dynamic -> prompt
 """
 import os
-from ..common.config import ConfigManager
+from core.common.config import ConfigManager   #配置管理器
 
 class PromptBuilder:
     def __init__(self):

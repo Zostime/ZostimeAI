@@ -3,8 +3,8 @@ import pyaudio
 import numpy as np
 from typing import Optional
 
-from ..common.config import ConfigManager   #配置管理器
-from ..common.logger import LogManager      #日志管理器
+from core.common.config import ConfigManager   #配置管理器
+from core.common.logger import LogManager      #日志管理器
 
 # ===============================
 # STT客户端

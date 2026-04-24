@@ -2,8 +2,8 @@ import subprocess
 import threading
 from typing import Optional
 
-from ..common.config import ConfigManager
-from ..common.logger import LogManager
+from core.common.config import ConfigManager   #配置管理器
+from core.common.logger import LogManager      #日志管理器
 
 class TTSClient:
     def __init__(self):

@@ -1,10 +1,12 @@
 from .ltm import LTMClient
 from .stm import STMClient
+from .note import NoteManager
 
 class MemoryManager:
     def __init__(self):
         self.LTM = LTMClient()
         self.STM = STMClient()
+        self.note = NoteManager()
 
     def add_memory(self, message: str, user_id):
         self.STM.add_memory(message, user_id)

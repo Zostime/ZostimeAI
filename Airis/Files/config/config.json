@@ -1,4 +1,7 @@
 {
+  "system": {
+    "websocket_port": 9000
+  },
   "llm": {
     "temperature": 1.0,
     "max_tokens": 4096,
@@ -36,6 +39,10 @@
     ]
   },
   "memory": {
+    "note": {
+      "path": "Files/memories/note",
+      "max_char": 256
+    },
     "stm": {
       "limit": 20,
       "path": "Files/memories/short_term"

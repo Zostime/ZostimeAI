@@ -23,7 +23,6 @@ from core.common.logger import LogManager
 USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
-WEBSOCKET_PORT = 9000
 
 class State:
     class Agent:
@@ -139,7 +138,8 @@ class EventBus:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        async with websockets.serve(self._connection_handler, "localhost", WEBSOCKET_PORT):
+        websocket_port = CONFIG.get_json("system.websocket_port")
+        async with websockets.serve(self._connection_handler, "localhost", websocket_port):
             await self._sender_loop()
 
     async def _connection_handler(self, websocket: WebSocketServerProtocol):
@@ -254,7 +254,6 @@ class EventRouter:
                 for act in data.get("actions", []):
                     session.registered_actions[act["name"]] = act
 
-
             elif command == "actions/unregister":
                 for name in data.get("action_names", []):
                     session.registered_actions.pop(name, None)
@@ -323,6 +322,8 @@ def build_memory_context(user_input) -> str:
     user_stm = MEMORY.search_stm(USER)               # [{"memory": str, "timestamp": datetime}, ...]
     assistant_stm = MEMORY.search_stm('Airis')
 
+    note = MEMORY.note.read()
+
     # STM排序(最新在前)
     user_stm = sorted(user_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
     assistant_stm = sorted(assistant_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
@@ -360,6 +361,10 @@ def build_memory_context(user_input) -> str:
             memory = entry.get("memory")
             score = entry.get("score")
             parts.append(f"- [{score:.2f}] {memory}")
+
+    if note:
+        parts.append("\nNOTE:")
+        parts.append(note)
 
     if len(parts) == 1:
         return "没有相关记忆"
