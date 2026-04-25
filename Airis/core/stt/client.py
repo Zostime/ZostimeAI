@@ -1,4 +1,8 @@
+import requests
+import base64
 import whisper
+import wave
+import io
 import pyaudio
 import numpy as np
 from typing import Optional
@@ -14,9 +18,6 @@ class STTClient:
         self.config = ConfigManager()
         self.logger = LogManager("stt").get_logger()
 
-        self.model = self._init_client()
-
-        # 音频参数（从配置读取，提供默认值）
         self.sample_rate = self.config.get_json("stt.sample_rate", 16000)
         self.channels = self.config.get_json("stt.channels", 1)
         self.chunk_size = self.config.get_json("stt.chunk_size", 1024)
@@ -24,22 +25,30 @@ class STTClient:
         self.silence_threshold = self.config.get_json("stt.silence_threshold", 500)   # RMS 能量阈值
         self.silence_timeout = self.config.get_json("stt.silence_timeout", 1.0)       # 静音超时（秒）
 
+        self.local = self.config.get_json("stt.local", True)
+        self.model_name = self.config.get_json("stt.model")
+        self.models_dir = self.config.get_path("stt.models_dir")
         self.language = self.config.get_json("stt.language")
         self.prompt=self.config.get_json("stt.prompt")
         self.temperature = self.config.get_json("stt.temperature")
         self.best_of = self.config.get_json("stt.best_of")
         self.beam_size = self.config.get_json("stt.beam_size")
+
         #PyAudio实例
         self.p = pyaudio.PyAudio()
-
         self.stream = None
         self.detect_chunk = None
 
+        if self.local:
+            self.model = self._init_client()
+        else:
+            self.api_key = self.config.get_env("STT_API_KEY")
+            self.account_id = self.config.get_env("STT_ACCOUNT_ID")
+            self.cloudflare_model = self.config.get_json("stt.cloudflare_model","@cf/openai/whisper-large-v3-turbo")
+            self.api_base_url = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/"
     def _init_client(self) -> whisper.Whisper:
-        model_name = self.config.get_json("stt.model")
-        models_dir = self.config.get_path("stt.models_dir")
         try:
-            model=whisper.load_model(model_name, download_root=str(models_dir))
+            model = whisper.load_model(self.model_name, download_root=str(self.models_dir))
         except Exception as e:
             raise ValueError(f"whisper初始化错误:{e}")
         return model
@@ -114,10 +123,21 @@ class STTClient:
             return None
 
         #将字节数据转为归一化的float32数组
-        audio_bytes = b''.join(frames)
-        audio_int16 = np.frombuffer(audio_bytes, dtype=np.int16)
+        pcm_bytes = b''.join(frames)
+        audio_int16 = np.frombuffer(pcm_bytes, dtype=np.int16)
         audio_float32 = audio_int16.astype(np.float32) / 32768.0
         return audio_float32
+
+    def _float32_to_wav_base64(self, audio_float32: np.ndarray) -> str:
+        audio_int16 = (audio_float32 * 32767).astype(np.int16)
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wf:
+            wf.setnchannels(self.channels)
+            wf.setsampwidth(self.p.get_sample_size(self.format))
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(audio_int16.tobytes())
+        wav_bytes = buf.getvalue()
+        return str(base64.b64encode(wav_bytes).decode("utf-8"))
 
     def listen_and_transcribe(self) -> Optional[str]:
         """
@@ -126,25 +146,44 @@ class STTClient:
         """
         audio = self._record_until_silence()
         if audio is None or len(audio) == 0:
-            print("\r未捕获到有效语音",end='')
+            print("\r未捕获到有效语音", end='')
             return None
 
         print("\r正在转写...",end='')
-        # 直接传入numpy数组
-        result = self.model.transcribe(
-            audio=audio,
-            fp16=False,
-            language=self.language,
-            prompt = self.prompt,
-            temperature = self.temperature,
-            best_of = self.best_of,
-            beam_size = self.beam_size
-        )   #type:ignore
-        text = result["text"].strip()
-        if text:
-            return text
-        else:
-            return None
+        if self.local:
+            result = self.model.transcribe(
+                audio=audio,
+                fp16=False,
+                language=self.language,
+                prompt = self.prompt,
+                temperature = self.temperature,
+                best_of = self.best_of,
+                beam_size = self.beam_size
+            )   #type:ignore
+            text = result["text"].strip()
+            if text:
+                return text
+            else:
+                return None
+        else:   #使用 Cloudflare API
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            audio_base64 = self._float32_to_wav_base64(audio)
+            response = (requests.post(
+                url=f"{self.api_base_url}{self.cloudflare_model}",
+                headers=headers,
+                json={
+                    "audio": audio_base64,
+                    "task": "transcribe",
+                    "language": self.language,
+                    "initial_prompt": self.prompt,
+                    "beam_size": self.beam_size
+                }
+            )).json()
+            if not response.get("success"):
+                self.logger.error(f"转录失败: {response.get('errors')}")
+                return None
+            text = response["result"]["text"].strip()
+            return text if text else None
 
     def __del__(self):
         """释放 PyAudio 资源"""

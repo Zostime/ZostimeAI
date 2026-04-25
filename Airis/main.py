@@ -21,7 +21,7 @@ from core.common.logger import LogManager
 
 #配置
 USER = "Zostime"
-ENABLE_STT = False
+ENABLE_STT = True
 ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
 
 class State:

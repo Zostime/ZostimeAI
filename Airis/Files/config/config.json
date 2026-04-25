@@ -17,10 +17,12 @@
     "volume": "+0%"
   },
   "stt": {
+    "local": false,
+    "cloudflare_model": "@cf/openai/whisper-large-v3-turbo",
     "model": "turbo",
     "models_dir": "Files/models/whisper",
     "language": "zh",
-    "prompt": "Zostime,Airis",
+    "prompt": "人名:[Zostime,Airis]",
     "temperature": 0,
     "best_of": 1,
     "beam_size": 5,
