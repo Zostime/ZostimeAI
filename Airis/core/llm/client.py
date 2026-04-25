@@ -30,7 +30,7 @@ class CacheManager:
                 f"cache.{self.service_name}_dir"
             )
             #创建缓存目录
-            cache_dir.mkdir(exist_ok=True)
+            cache_dir.mkdir(exist_ok=True, parents=True)
             #创建子目录
             sub_dirs = ['conversations']
             for sub_dir in sub_dirs:
