@@ -33,6 +33,7 @@ class STTClient:
         self.temperature = self.config.get_json("stt.temperature")
         self.best_of = self.config.get_json("stt.best_of")
         self.beam_size = self.config.get_json("stt.beam_size")
+        self.vad_filter = self.config.get_json("stt.vad_filter")
 
         #PyAudio实例
         self.p = pyaudio.PyAudio()
@@ -174,6 +175,7 @@ class STTClient:
                 json={
                     "audio": audio_base64,
                     "task": "transcribe",
+                    "vad_filter": self.vad_filter,
                     "language": self.language,
                     "initial_prompt": self.prompt,
                     "beam_size": self.beam_size
