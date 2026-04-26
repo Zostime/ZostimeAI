@@ -1,9 +1,7 @@
-import subprocess
-import threading
-import asyncio
 import queue
-from typing import Optional
-import edge_tts
+import threading
+import azure.cognitiveservices.speech as speechsdk # noqa
+import pyaudio
 
 from core.common.config import ConfigManager
 from core.common.logger import LogManager
@@ -14,168 +12,157 @@ class TTSClient:
         self.logger = LogManager("tts").get_logger()
 
         self.voice = self.config.get_json("tts.voice")
+        self.lang = self.config.get_json("tts.lang")
         self.pitch = self.config.get_json("tts.pitch")
         self.rate = self.config.get_json("tts.rate")
         self.volume = self.config.get_json("tts.volume")
 
-        self._text_queue: queue.Queue = queue.Queue()
-        self._boundary_queue: queue.Queue = queue.Queue()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._worker_thread: Optional[threading.Thread] = None
-        self._process: Optional[subprocess.Popen] = None
+        self.speech_key = self.config.get_env("TTS_SPEECH_KEY")
+        self.service_region = self.config.get_env("TTS_SERVICE_REGION")
 
-        self._stop_event = threading.Event()
-        self._shutdown_event = threading.Event()
-        self._start_worker()
+        self.running = True
+        self.text_queue = queue.Queue()
+        self.audio_queue = queue.Queue()
 
-    def _start_worker(self):
-        if self._worker_thread and self._worker_thread.is_alive():
-            return
-        self._shutdown_event.clear()
-        self._worker_thread = threading.Thread(
-            target=self._run_worker_loop,
-            daemon=True
+        self.p = None
+        self.player = None
+        self.synthesizer = None
+
+        self.synthesis_idle = threading.Event()
+        self.synthesis_idle.set()
+        self.stop_requested = False
+
+        self._init()
+        self._start_threads()
+
+    def _init(self):
+        speech_config = speechsdk.SpeechConfig(
+            subscription=self.speech_key, region=self.service_region
         )
-        self._worker_thread.start()
+        speech_config.speech_synthesis_voice_name = self.voice
+        speech_config.set_speech_synthesis_output_format(
+            speechsdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm
+        )
+        self.synthesizer = speechsdk.SpeechSynthesizer(
+            speech_config=speech_config, audio_config=None
+        )
 
-    def _stop_worker(self):
-        if not self._worker_thread:
-            return
-        self._shutdown_event.set()
-        self._text_queue.put(None)
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        self._worker_thread.join(timeout=3)
-        self._worker_thread = None
+        self.synthesizer.synthesizing.connect(self._on_synthesizing)
+        self.synthesizer.synthesis_completed.connect(self._on_synthesis_completed)
+        self.synthesizer.synthesis_canceled.connect(self._on_synthesis_canceled)
 
-    def get_boundary_queue(self) -> queue.Queue:
-        return self._boundary_queue
+        self.p = pyaudio.PyAudio()
+        self.player = self.p.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=24000,
+            output=True,
+            frames_per_buffer=4096
+        )
 
-    def stream_feed(self, text: str):
-        if not text:
-            return
-        self._stop_event.clear()
-        if not self._worker_thread or not self._worker_thread.is_alive():
-            self._start_worker()
-        self._text_queue.put(text)
+    def _start_threads(self):
+        self.player_thread = threading.Thread(target=self._player_worker, daemon=True)
+        self.synth_thread = threading.Thread(target=self._synth_worker, daemon=True)
+        self.player_thread.start()
+        self.synth_thread.start()
 
-    def interrupt(self):
-        self._stop_event.set()
-        while not self._text_queue.empty():
-            try:
-                self._text_queue.get_nowait()
-            except queue.Empty:
-                break
-        self._kill_player()
-
-    def shutdown(self):
-        self._stop_worker()
-        self._kill_player()
-
-    def _run_worker_loop(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
+    def _on_synthesizing(self, evt):
         try:
-            self._loop.run_until_complete(self._async_process_queue())
+            data = evt.result.audio_data
+            if data:
+                self.audio_queue.put(data)
         except Exception as e:
-            self.logger.error(f"Worker loop error: {e}")
-        finally:
-            self._loop.close()
-            self._loop = None
-            self._kill_player()
+            self.logger.error(f"Error in synthesizing callback: {e}")
 
-    async def _async_process_queue(self):
-        while not self._shutdown_event.is_set():
+    def _on_synthesis_completed(self, evt): # noqa
+        self.synthesis_idle.set()
+
+    def _on_synthesis_canceled(self, evt):
+        self.synthesis_idle.set()
+        cancellation_details = evt.result.cancellation_details
+        self.logger.warning(
+            f"Synthesis canceled: {cancellation_details.reason}"
+        )
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            self.logger.error(f"Error details: {cancellation_details.error_details}")
+
+    def _player_worker(self):
+        while self.running:
+            data = self.audio_queue.get()
+            if data is None:
+                break
             try:
-                text = await self._loop.run_in_executor(
-                    None, self._text_queue.get
-                )
-            except Exception: # noqa
+                self.player.write(data)
+            except Exception as e:
+                self.logger.error(f"Audio write error: {e}")
                 break
 
+    def _synth_worker(self):
+        while self.running:
+            try:
+                text = self.text_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
             if text is None:
                 break
+            if not text.strip():
+                continue
 
-            await self._play_text(text)
+            self.synthesis_idle.wait()
+            if self.stop_requested:
+                break
+            self.synthesis_idle.clear()
 
-        self._kill_player()
+            ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{self.lang}">
+                <voice name="{self.voice}">
+                    <prosody pitch="{self.pitch}" rate="{self.rate}" volume="{self.volume}">{text}</prosody>
+                </voice>
+            </speak>
+            """
+            try:
+                self.synthesizer.speak_ssml_async(ssml_string)
+            except Exception as e:
+                self.logger.error(f"Synthesis start error: {e}")
+                self.synthesis_idle.set()
 
-    async def _play_text(self, text: str):
-        if not self._ensure_player():
-            self.logger.error("Failed to start ffplay player")
+    def stream_feed(self, text: str) -> None:
+        if not self.running:
             return
+        self.text_queue.put(text)
 
+    def interrupt(self):
+        self.stop_requested = True
         try:
-            communicate = edge_tts.Communicate(
-                text=text,
-                voice=self.voice,
-                rate=self.rate,
-                pitch=self.pitch,
-                volume=self.volume,
-            )
-            async for chunk in communicate.stream():
-                if self._stop_event.is_set():
-                    break
-                if chunk["type"] == "WordBoundary" or chunk["type"] == "SentenceBoundary":
-                    try:
-                        self._boundary_queue.put_nowait({
-                            "type": chunk["type"],
-                            "text": chunk["text"],
-                            "offset": chunk["offset"],
-                            "duration": chunk["duration"]
-                        })
-                    except queue.Full:
-                        pass
-                if chunk["type"] == "audio":
-                    data = chunk["data"]
-                    if self._process and self._process.stdin:
-                        try:
-                            self._process.stdin.write(data)
-                            self._process.stdin.flush()
-                        except (BrokenPipeError, OSError):
-                            self._kill_player()
-                            return
-            if self._process and self._process.stdin:
-                try:
-                    self._process.stdin.flush()
-                except (BrokenPipeError, OSError):
-                    self._kill_player()
+            self.synthesizer.stop_speaking_async().get()
         except Exception as e:
-            self.logger.error(f"TTS playback error: {e}")
-        finally:
-            if self._stop_event.is_set():
-                self._kill_player()
+            self.logger.error(f"Error stopping synthesis: {e}")
 
-    def _ensure_player(self) -> bool:
-        if self._process is not None and self._process.poll() is None:
-            return True
-        cmd = [
-            "ffplay",
-            "-f", "mp3",
-            "-i", "pipe:0",
-            "-nodisp",
-            "-autoexit",
-            "-loglevel", "quiet",
-        ]
-        try:
-            self._process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except Exception as e:
-            self.logger.error(f"Cannot start ffplay: {e}")
-            return False
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
-    def _kill_player(self):
-        if self._process:
-            if self._process.poll() is None:
-                self._process.terminate()
-                try:
-                    self._process.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    self._process.kill()
-                    self._process.wait()
-            self._process = None
+        while not self.text_queue.empty():
+            try:
+                self.text_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        self.synthesis_idle.set()
+        self.stop_requested = False
+
+    def close(self):
+        self.running = False
+        self.text_queue.put(None)
+        self.audio_queue.put(None)
+        if hasattr(self, 'synth_thread') and self.synth_thread.is_alive():
+            self.synth_thread.join(timeout=2.0)
+        if hasattr(self, 'player_thread') and self.player_thread.is_alive():
+            self.player_thread.join(timeout=2.0)
+        if self.player:
+            self.player.stop_stream()
+            self.player.close()
+        if self.p:
+            self.p.terminate()
