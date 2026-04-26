@@ -477,6 +477,8 @@ def llm_worker():
                     tools=tools if ENABLE_TOOLS else None,
                     tool_choice = tool_choice
                 )
+                buf = ""
+                chars = ['.', '。', '!', '！', '?', '？', '\n']
                 while True:
                     try:
                         if INTERRUPT.is_interrupted():
@@ -484,6 +486,12 @@ def llm_worker():
                             break
                         chunk = next(gen)
                         print(chunk, end='', flush=True)
+
+                        buf += chunk
+                        if any(_ in buf for _ in chars):
+                            tts_queue.put(buf)
+                            buf = ""
+
                         EventRouter.State.emit(
                             data={
                                 "type": "llm_stream",
@@ -492,7 +500,7 @@ def llm_worker():
                         )
                     except StopIteration as e:
                         result = e.value
-                        tts_queue.put(result['full_content'])
+                        tts_queue.put(buf)
                         MEMORY.add_memory(result['full_content'], user_id="Airis")
                         break
 
@@ -582,7 +590,7 @@ def tts_worker():
         if text is None:
             break
         STATE.agent.is_silent = False
-        TTS.stream_tts(text)
+        TTS.stream_feed(text)
         STATE.agent.is_silent = True
 
 if __name__ == '__main__':
@@ -616,7 +624,6 @@ if __name__ == '__main__':
         threading.Event().wait() # loop
 
     except KeyboardInterrupt:
-        if llm_queue is not None and tts_queue is not None:
-            llm_queue.put(None)
-            tts_queue.put(None)
+        llm_queue.put(None)
+        tts_queue.put(None)
         exit()
