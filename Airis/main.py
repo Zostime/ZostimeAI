@@ -484,12 +484,12 @@ def llm_worker():
                         if INTERRUPT.is_interrupted():
                             gen.close()
                             break
-                        chunk = next(gen)
-                        print(chunk, end='', flush=True)
 
+                        chunk = next(gen)
                         buf += chunk
+
                         if any(_ in buf for _ in chars):
-                            tts_queue.put(buf)
+                            TTS.stream_feed(buf)
                             buf = ""
 
                         EventRouter.State.emit(
@@ -500,7 +500,7 @@ def llm_worker():
                         )
                     except StopIteration as e:
                         result = e.value
-                        tts_queue.put(buf)
+                        TTS.stream_feed(buf)
                         MEMORY.add_memory(result['full_content'], user_id="Airis")
                         break
 
@@ -577,7 +577,7 @@ def llm_worker():
 
         except Exception as e:
             print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
-            tts_queue.put("Someone tell Zostime there is a problem with my AI.")
+            TTS.stream_feed("Someone tell Zostime there is a problem with my AI.")
             LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
             STATE.env.is_speaking = False
@@ -585,17 +585,27 @@ def llm_worker():
             STATE.agent.unread_events = []  # 清空未读消息
 
 def tts_worker():
+    boundary_queue = TTS.get_boundary_queue()
     while True:
-        text = tts_queue.get()
-        if text is None:
-            break
-        STATE.agent.is_silent = False
-        TTS.stream_feed(text)
-        STATE.agent.is_silent = True
+        event = boundary_queue.get()
+        if event["type"] == "SentenceBoundary":
+            sentence = event["text"].strip()
+            if not sentence:
+                continue
+
+            duration_100ns = event["duration"]
+            start_time = time.time()
+            char_duration = (duration_100ns / 1e7) / len(sentence)
+
+            for i, char in enumerate(sentence):
+                expected_time = start_time + (i * char_duration)
+                sleep_time = expected_time - time.time()
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                print(char, end='', flush=True)
 
 if __name__ == '__main__':
     llm_queue = queue.Queue()
-    tts_queue = queue.Queue()
 
     try:
         CONFIG = ConfigManager()
@@ -625,5 +635,4 @@ if __name__ == '__main__':
 
     except KeyboardInterrupt:
         llm_queue.put(None)
-        tts_queue.put(None)
         exit()

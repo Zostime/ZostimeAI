@@ -19,6 +19,7 @@ class TTSClient:
         self.volume = self.config.get_json("tts.volume")
 
         self._text_queue: queue.Queue = queue.Queue()
+        self._boundary_queue: queue.Queue = queue.Queue()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._worker_thread: Optional[threading.Thread] = None
         self._process: Optional[subprocess.Popen] = None
@@ -46,6 +47,9 @@ class TTSClient:
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._worker_thread.join(timeout=3)
         self._worker_thread = None
+
+    def get_boundary_queue(self) -> queue.Queue:
+        return self._boundary_queue
 
     def stream_feed(self, text: str):
         if not text:
@@ -112,6 +116,16 @@ class TTSClient:
             async for chunk in communicate.stream():
                 if self._stop_event.is_set():
                     break
+                if chunk["type"] == "WordBoundary" or chunk["type"] == "SentenceBoundary":
+                    try:
+                        self._boundary_queue.put_nowait({
+                            "type": chunk["type"],
+                            "text": chunk["text"],
+                            "offset": chunk["offset"],
+                            "duration": chunk["duration"]
+                        })
+                    except queue.Full:
+                        pass
                 if chunk["type"] == "audio":
                     data = chunk["data"]
                     if self._process and self._process.stdin:
