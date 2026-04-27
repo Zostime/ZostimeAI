@@ -486,7 +486,6 @@ def llm_worker():
                             break
 
                         chunk = next(gen)
-                        print(chunk, end='', flush=True)
                         buf += chunk
 
                         if any(_ in buf for _ in chars):
@@ -585,6 +584,14 @@ def llm_worker():
             STATE.agent.is_silent = True
             STATE.agent.unread_events = []  # 清空未读消息
 
+def tts_worker():
+    while True:
+        try:
+            word = TTS.subtitle_queue.get()
+            print(word, end='', flush=True)
+        except queue.Empty:
+            pass
+
 if __name__ == '__main__':
     llm_queue = queue.Queue()
 
@@ -609,6 +616,7 @@ if __name__ == '__main__':
         EVENT_BUS.on("game", EventRouter.Game.handle)
 
         threading.Thread(target=llm_worker, daemon=True).start()
+        threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=lambda: asyncio.run(EVENT_BUS.run()), daemon=True).start()
 
         threading.Event().wait() # loop
