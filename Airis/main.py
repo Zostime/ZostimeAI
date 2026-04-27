@@ -588,9 +588,10 @@ def tts_worker():
     while True:
         try:
             word = TTS.subtitle_queue.get()
+            STATE.agent.is_silent = False
             print(word, end='', flush=True)
         except queue.Empty:
-            pass
+            STATE.agent.is_silent = True
 
 if __name__ == '__main__':
     llm_queue = queue.Queue()
