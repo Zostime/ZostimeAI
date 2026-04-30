@@ -23,7 +23,7 @@ class ConfigManager:
         self._initialized = True
 
         self.base_dir = Path(__file__).parent.parent.parent
-        self.config_dir = self.base_dir / "Files" / "config"
+        self.config_dir = self.base_dir / "data" / "config"
         self.json_config = {}
         self._load_config()
 

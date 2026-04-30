@@ -6,37 +6,40 @@
 ## File structure
 ```
 Airis/
-├─airis_sdk/               # SDK
-│   ├─__init__.py    
-│   └─websocket.py     
-├─core/                    # Core
+├─airis_sdk/                # SDK
 │   ├─__init__.py     
-│   ├─common/              # Public module
-│   │  ├─__init__.py       
-│   │  ├─config.py         
-│   │  └─logger.py         
-│   ├─llm/                 # LLM module
-│   │   ├─__init__.py  
-│   │   └─client.py    
-│   ├─prompts/             # PROMPTS module
-│   │   ├─init.py  
-│   │   ├─system.md        # system prompt
-│   │   ├─personality.md   # personality prompt
-│   │   ├─memory.md        # memory prompt
-│   │   ├─runtime_state.md # runtime state prompt
-│   │   └─builder.py       # prompts builder
-│   ├─tts/                 # TTS module
+│   ├─core/  
+│   │  └─websocket.py   
+│   └devtools/ 
+│      └─websocket_proxy.py   
+├─core/                     # Core
+│   ├─__init__.py      
+│   ├─common/               # Public module
+│   │  ├─__init__.py        
+│   │  ├─config.py          
+│   │  └─logger.py          
+│   ├─llm/                  # LLM module
 │   │   ├─__init__.py   
 │   │   └─client.py     
-│   ├─stt/                 # STT module
-│   │   ├─__init__.py   
-│   │   └─client.py     
-│   └─memory/              # Memory systrm
-│       ├─__init__.py  
-│       ├─manager.py       
-│       ├─stm.py  
-│       └─ltm.py  
-├─Files/                   # Data and config
+│   ├─prompts/              # PROMPTS module
+│   │   ├─init.py   
+│   │   ├─system.md         # system prompt
+│   │   ├─personality.md    # personality prompt
+│   │   ├─memory.md         # memory prompt
+│   │   ├─runtime_state.md  # runtime state prompt
+│   │   └─builder.py        # prompts builder
+│   ├─tts/                  # TTS module
+│   │   ├─__init__.py    
+│   │   └─client.py      
+│   ├─stt/                  # STT module
+│   │   ├─__init__.py    
+│   │   └─client.py      
+│   └─memory/               # Memory systrm
+│       ├─__init__.py   
+│       ├─manager.py        
+│       ├─stm.py   
+│       └─ltm.py   
+├─data/                    # Data and config
 │   ├─models/        
 │   ├─cache/          
 │   ├─config/         
@@ -44,11 +47,11 @@ Airis/
 │   └─memories/           
 │       ├─short_term      
 │       └─long_term  
-├─server/                  # External services
-│   └─... 
-├─.venv/                   # Python virtual environment
-├─main.py                  # Program entry point
-└─requirements.txt         # Project dependencies
+├─server/                   # External services
+│   └─...  
+├─.venv/                    # Python virtual environment
+├─main.py                   # Program entry point
+└─requirements.txt          # Project dependencies
 ```
 ## Start
 - Copy .env.example as .env and fill in the actual values

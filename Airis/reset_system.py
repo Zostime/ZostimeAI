@@ -6,10 +6,10 @@ DelTargetPath = [
 ]
 
 DelDirectories = [
-    "./Files/memories/long_term",
-    "./Files/cache/llm/conversations",
-    "./Files/cache/tts",
-    "./Files/logs",
+    "./data/memories/long_term",
+    "./data/cache/llm/conversations",
+    "./data/cache/tts",
+    "./data/logs",
 ]
 
 if __name__ == "__main__":

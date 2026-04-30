@@ -8,7 +8,7 @@ core/llm/server.py
 core/llm/models
 
 #模型文件
-Files/models/*
+data/models/*
 
 #server
 server/*
@@ -17,16 +17,16 @@ server/*
 !server/calculator
 
 #.env
-Files/config/.env
-!Files/config/.env.example
+data/config/.env
+!data/config/.env.example
 
 #memory
-Files/memories/*
+data/memories/*
 
 #cache
-Files/cache/*
+data/cache/*
 
 #logs
-Files/logs/*
+data/logs/*
 
 test.py
