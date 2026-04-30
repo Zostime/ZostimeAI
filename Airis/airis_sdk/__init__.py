@@ -1,4 +1,4 @@
-from .websocket import Websocket
-from .websocket import Action
+from .core.websocket import Websocket
+from .core.websocket import Action
 
 __all__ = ["Websocket", "Action"]

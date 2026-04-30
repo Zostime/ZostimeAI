@@ -5,7 +5,7 @@ import asyncio
 
 async def main():
     client = Websocket()
-    await client.connect("ws://localhost:9000/game")
+    await client.connect("ws://localhost:8000/game")
     await client.startup("calculator")
 
     await client.register_actions([

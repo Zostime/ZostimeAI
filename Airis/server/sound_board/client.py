@@ -9,8 +9,8 @@ audios_dir = f"{Path(__file__).parent}/audios"
 
 async def main():
     client = Websocket()
-    await client.connect("ws://localhost:9000/game")
-    await client.startup("calculator")
+    await client.connect("ws://localhost:8000/game")
+    await client.startup("sound_board")
 
     await client.register_actions([
         Action(

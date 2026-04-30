@@ -1,6 +1,6 @@
 {
   "system": {
-    "websocket_port": 9000
+    "websocket_port": 8000
   },
   "llm": {
     "temperature": 1.0,

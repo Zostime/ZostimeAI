@@ -4,7 +4,7 @@ import json
 import os
 
 from core.common.config import ConfigManager
-from airis_sdk.websocket import Websocket, Action
+from airis_sdk import Websocket, Action
 
 class NoteManager:
     def __init__(self):
