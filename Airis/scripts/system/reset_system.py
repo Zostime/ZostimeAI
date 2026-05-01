@@ -6,7 +6,7 @@ DelTargetPath = [
 ]
 
 DelDirectories = [
-    "./data/memories/long_term",
+    "./data/memories",
     "./data/cache/llm/conversations",
     "./data/cache/tts",
     "./data/logs",

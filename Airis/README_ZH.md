@@ -39,14 +39,21 @@ Airis/
 │       ├─manager.py       
 │       ├─stm.py  
 │       └─ltm.py  
-├─data/                    # 数据和配置
+├─data/                    # 数据、配置和备份
 │   ├─models/        
 │   ├─cache/          
 │   ├─config/          
 │   ├─logs/           
-│   └─memories/            
-│       ├─short_term       
-│       └─long_term   
+│   ├─memories/            
+│   │   ├─short_term       
+│   │   └─long_term   
+│   └─backups/
+├─scripts/                  # 脚本
+│   ├─system/    
+│   │   └─reset_system.py   # 重置系统       
+│   └─backup/
+│       ├─restore.py        # 加载备份   
+│       └─backup.py         # 备份        
 ├─server/                   # 外部服务
 │   └─...        
 ├─.venv/                    # Python虚拟环境

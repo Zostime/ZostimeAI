@@ -106,5 +106,13 @@
     "stt_dir": "data/cache/stt",
     "memory_dir": "data/cache/memory",
     "system_dir": "data/cache/system"
+  },
+  "backup": {
+    "dir": "data/backups",
+    "paths": {
+      "config": "data/config/config.json",
+      "memories": "data/memories"
+    },
+    "include": ["config", "memories"]
   }
 }
