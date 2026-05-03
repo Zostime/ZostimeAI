@@ -116,7 +116,7 @@ class EventHandler:
         }
 
         llm_queue.put({
-            "source": USER,
+            "source": data['source'],
             "input": STATE.env.input['content']
         })
 

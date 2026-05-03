@@ -127,7 +127,6 @@ class TTSClient:
                     if current_frame >= target_frame:
                         self.subtitle_queue.put(text)
                         break
-                    threading.Event().wait(0.001)
 
     def _on_synthesizing(self, evt):
         try:
