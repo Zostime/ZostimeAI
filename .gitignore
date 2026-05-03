@@ -1,0 +1,35 @@
+#编译器文件
+**/.venv
+**/.idea
+**/__pycache__/
+
+# LLM本地服务器
+Airis/core/llm/server.py
+Airis/core/llm/models
+
+# 模型文件
+Airis/data/models/*
+
+# server
+server/*
+!server/painter/client.py
+!server/sound_board
+!server/calculator
+
+# .env
+Airis/data/config/.env
+!Airis/data/config/.env.example
+
+# memory
+Airis/data/memories/*
+
+# cache
+Airis/data/cache/*
+
+# logs
+Airis/data/logs/*
+
+# backups
+Airis/data/backups/*
+
+Airis/test.py
