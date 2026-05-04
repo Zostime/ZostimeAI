@@ -3,9 +3,8 @@ import threading
 import azure.cognitiveservices.speech as speechsdk # noqa
 import pyaudio
 
-from core.common.config import ConfigManager
-from core.common.logger import LogManager
-
+from ..common.config import ConfigManager   #配置管理器
+from ..common.logger import LogManager      #日志管理器
 
 class TTSClient:
     SENTENCE_END = object()

@@ -4,8 +4,8 @@ import os
 import math
 import time
 
-from core.common.config import ConfigManager   #配置管理器
-from core.common.logger import LogManager      #日志管理器
+from ..common.config import ConfigManager   #配置管理器
+from ..common.logger import LogManager      #日志管理器
 
 # ===============================
 # LTM客户端

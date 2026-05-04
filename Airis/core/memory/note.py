@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 
-from core.common.config import ConfigManager
+from ..common.config import ConfigManager   #配置管理器
 from airis_sdk import Websocket, Action
 
 class NoteManager:

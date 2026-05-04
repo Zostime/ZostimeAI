@@ -7,8 +7,8 @@ from typing import Any,Generator,Dict,List,Optional
 from pathlib import Path
 import json
 
-from core.common.config import ConfigManager   #配置管理器
-from core.common.logger import LogManager      #日志管理器
+from ..common.config import ConfigManager   #配置管理器
+from ..common.logger import LogManager      #日志管理器
 
 # ===============================
 # 缓存管理器
