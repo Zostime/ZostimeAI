@@ -56,14 +56,16 @@ ZostimeAI/
 │   ├─.venv/                    # Python virtual environment
 │   ├─main.py                   # Program entry point
 │   └─requirements.txt          # Project dependencies
-├─airis_sdk/                    # SDK
-│       ├─__init__.py     
-│       ├─core/  
-│       │  └─websocket.py   
-│       └devtools/ 
-│          └─websocket_proxy.py   
-├─server/                       # External services
-│   └─...  
+├─sdk/                          # SDK
+│   └─python/                   
+│       ├─airis_sdk/            # Python package
+│       │   ├─__init__.py      
+│       │   ├─websocket.py  
+│       │   └devtools/ 
+│       │      └─websocket_proxy.py   
+│       └─pyproject.toml            
+└─server/                       # External services
+    └─...  
 ```
 ## Quick Start
 - **Copy [.env.example](Airis/data/config/.env.example) as .env and fill in the actual values**

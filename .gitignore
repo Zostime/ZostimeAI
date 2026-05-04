@@ -2,6 +2,7 @@
 **/.venv
 **/.idea
 **/__pycache__/
+*.egg-info/
 
 # LLM本地服务器
 Airis/core/llm/server.py
@@ -32,4 +33,4 @@ Airis/data/logs/*
 # backups
 Airis/data/backups/*
 
-Airis/test.py
+**/test.py
