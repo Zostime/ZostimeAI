@@ -9,7 +9,7 @@ from airis_sdk import Websocket, Action
 class NoteManager:
     def __init__(self):
         self.config = ConfigManager()
-        self.websocket_port = str(self.config.get_json("system.websocket_port"))
+        self.websocket_url = self.config.get_json("system.websocket_url")
         self.max_char = int(self.config.get_json("memory.note.max_char", 128))
         self.file_path = self.config.get_json("memory.note.path")
         threading.Thread(
@@ -20,7 +20,7 @@ class NoteManager:
     async def _init(self):
         os.makedirs(self.file_path, exist_ok=True)
         client = Websocket()
-        await client.connect(f"ws://localhost:{self.websocket_port}/game")
+        await client.connect(f"{self.websocket_url}/game")
         await client.startup("note")
 
         await client.register_actions([

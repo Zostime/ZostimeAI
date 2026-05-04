@@ -1,6 +1,6 @@
 {
   "system": {
-    "websocket_port": 8000
+    "websocket_url": "ws://localhost:8000"
   },
   "llm": {
     "temperature": 1.0,

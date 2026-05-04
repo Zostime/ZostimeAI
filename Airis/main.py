@@ -1,6 +1,7 @@
 from websockets.server import WebSocketServerProtocol # noqa
 from typing import Any, Literal, Optional, Dict
 from collections import defaultdict
+from urllib.parse import urlparse
 import websockets
 import threading
 import datetime
@@ -138,8 +139,11 @@ class EventBus:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        websocket_port = CONFIG.get_json("system.websocket_port")
-        async with websockets.serve(self._connection_handler, "localhost", websocket_port):
+        ws_url = CONFIG.get_json("system.websocket_url")
+        parsed = urlparse(ws_url)
+        host = parsed.hostname
+        port = parsed.port
+        async with websockets.serve(self._connection_handler, host, port):
             await self._sender_loop()
 
     async def _connection_handler(self, websocket: WebSocketServerProtocol):
