@@ -1,7 +1,11 @@
 # Airis
 **这是一个由Zostime建立的AI项目.**
 
-------------
+---
+
+<p>
+  [<a href="../README.md">English</a>]
+</p>
 
 ## 文件结构
 ```
@@ -62,8 +66,8 @@ ZostimeAI/
 │   └─...        
 ```
 ## 快速开始
-- **复制 [.env.example](Airis/data/config/.env.example) 为 .env 后填充真实值**
-- **用PowerShell 打开 [Airis](./Airis) 文件夹**
+- **复制 [.env.example](../Airis/data/config/.env.example) 为 .env 后填充真实值**
+- **用PowerShell 打开 [Airis](../Airis) 文件夹**
 - **创建虚拟环境(首次运行)**
 - `python -m venv .venv`
 - **激活虚拟环境**

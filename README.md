@@ -1,7 +1,11 @@
 # Airis
 **This is an AI project created by Zostime.**
 
-------------
+---
+
+<p>
+  [<a href="./docs/README.zh-CN.md">简体中文</a>]
+</p>
 
 ## File structure
 ```
