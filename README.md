@@ -56,14 +56,17 @@ ZostimeAI/
 │   ├─.venv/                    # Python virtual environment
 │   ├─main.py                   # Program entry point
 │   └─requirements.txt          # Project dependencies
-├─sdk/                          # SDK
+├─airis-sdk/                    # SDK
 │   └─python/                   
 │       ├─airis_sdk/            # Python package
 │       │   ├─__init__.py      
 │       │   ├─websocket.py  
-│       │   └devtools/ 
+│       │   └─devtools/ 
 │       │      └─websocket_proxy.py   
 │       └─pyproject.toml            
+├─docs/                         # Document
+│   ├─airis-api/
+│   └─...                      
 └─server/                       # External services
     └─...  
 ```
