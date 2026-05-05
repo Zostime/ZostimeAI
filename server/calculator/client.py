@@ -22,7 +22,7 @@ async def main():
                 },
                 "required": ["expression"]
             }
-        ).to_dict()
+        )
     ])
 
     async def on_action(payload):

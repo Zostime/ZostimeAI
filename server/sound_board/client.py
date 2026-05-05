@@ -26,7 +26,7 @@ async def main():
                 },
                 "required": ["audio"]
             }
-        ).to_dict()
+        )
     ])
 
     async def on_action(payload):

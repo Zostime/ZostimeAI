@@ -40,7 +40,7 @@ class NoteManager:
                 },
                 "required": ["content", "mode"]
             }
-            ).to_dict()
+            )
         ])
 
         async def on_action(payload):

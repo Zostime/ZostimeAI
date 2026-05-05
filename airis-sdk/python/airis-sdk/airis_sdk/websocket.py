@@ -24,12 +24,6 @@ class Action:
     description: str
     schema: Optional[Dict[str, Any]] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        result = {"name": self.name, "description": self.description}
-        if self.schema is not None:
-            result["schema"] = self.schema
-        return result
-
 class Websocket:
     def __init__(self):
         self.uri = None
@@ -82,7 +76,7 @@ class Websocket:
 
         await self.ws.send(json.dumps(payload))
 
-    async def register_actions(self, actions: list[dict]) -> None:
+    async def register_actions(self, actions: list[Action]) -> None:
         """
         此消息为 Airis 注册一个或多个操作以供使用.
 
@@ -93,7 +87,14 @@ class Websocket:
             "command": "actions/register",
             "game": self.game_name,
             "data": {
-                "actions": actions
+                "actions": [
+                    {
+                        "name": a.name,
+                        "description": a.description,
+                        **({} if a.schema is None else {"schema": a.schema})
+                    }
+                    for a in actions
+                ]
             }
         }
 

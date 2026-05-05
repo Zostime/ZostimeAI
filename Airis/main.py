@@ -20,7 +20,7 @@ from core.prompts.manager import PromptBuilder
 from core.common.config import ConfigManager
 from core.common.logger import LogManager
 
-#配置
+# 配置
 USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
