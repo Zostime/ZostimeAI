@@ -57,13 +57,20 @@ ZostimeAI/
 │   ├─main.py                   # Program entry point
 │   └─requirements.txt          # Project dependencies
 ├─airis-sdk/                    # SDK
-│   └─python/                   
-│       ├─airis_sdk/            # Python package
-│       │   ├─__init__.py      
-│       │   ├─websocket.py  
-│       │   └─devtools/ 
-│       │      └─websocket_proxy.py   
-│       └─pyproject.toml            
+│   ├─python/                   
+│   │   ├─airis_sdk/            # Python package
+│   │   │   ├─__init__.py      
+│   │   │   ├─websocket.py  
+│   │   │   └─devtools/ 
+│   │   │      └─websocket_proxy.py   
+│   │   └─pyproject.toml   
+│   └─typescript/
+│       ├─src/
+│       │   ├─index.ts
+│       │   └─websocket.ts
+│       ├─dist/
+│       ├─package.json
+│       └─tsconfig.json         
 ├─docs/                         # Document
 │   ├─airis-api/
 │   └─...                      

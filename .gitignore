@@ -33,4 +33,7 @@ Airis/data/logs/*
 # backups
 Airis/data/backups/*
 
+# node
+**/node_modules
+
 **/test.py
