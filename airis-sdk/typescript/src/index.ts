@@ -22,17 +22,23 @@ export interface Action {
     } & Record<string, unknown>;
 }
 
+export interface ActionCommand {
+    id: string;
+    name: string;
+    data: string;
+}
+
 // noinspection JSUnusedGlobalSymbols
 export class Websocket {
 
     uri: string | null = null;
     ws: WebSocket | null = null;
     gameName: string | null = null;
-    private _actionCallback: ((action: Record<string, unknown>) => void | Promise<void>) | null = null;
+    private _actionCallback: ((action: ActionCommand) => void | Promise<void>) | null = null;
     private _pendingActions = new Map<
         string,
         {
-            resolve: (action: Record<string, unknown>) => void;
+            resolve: (action: ActionCommand) => void;
             reject: (reason?: any) => void;
         }
     >();
@@ -202,7 +208,7 @@ export class Websocket {
      *
      * @param callback - 处理 action 的回调，可以是同步或异步函数
      */
-    onAction(callback: ((action: Record<string, unknown>) => void | Promise<void>)): void {
+    onAction(callback: ((action: ActionCommand) => void | Promise<void>)): void {
         this._actionCallback = callback;
     }
 

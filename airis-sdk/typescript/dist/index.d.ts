@@ -15,6 +15,11 @@ export interface Action {
         type: "object";
     } & Record<string, unknown>;
 }
+export interface ActionCommand {
+    id: string;
+    name: string;
+    data: string;
+}
 export declare class Websocket {
     uri: string | null;
     ws: WebSocket | null;
@@ -84,7 +89,7 @@ export declare class Websocket {
      *
      * @param callback - 处理 action 的回调，可以是同步或异步函数
      */
-    onAction(callback: ((action: Record<string, unknown>) => void | Promise<void>)): void;
+    onAction(callback: ((action: ActionCommand) => void | Promise<void>)): void;
     /**
      * 内部监听，持续接收 WebSocket 消息并处理。
      * 在 connect() 成功之后调用，不应手动调用。
