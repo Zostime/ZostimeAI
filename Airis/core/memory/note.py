@@ -4,7 +4,7 @@ import json
 import os
 
 from ..common.config import ConfigManager   #配置管理器
-from airis_sdk import Websocket, Action
+from airis_sdk import AirisClient, Action
 
 class NoteManager:
     def __init__(self):
@@ -19,7 +19,7 @@ class NoteManager:
 
     async def _init(self):
         os.makedirs(self.file_path, exist_ok=True)
-        client = Websocket()
+        client = AirisClient()
         await client.connect(f"{self.websocket_url}/game")
         await client.startup("note")
 
