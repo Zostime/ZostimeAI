@@ -1,4 +1,4 @@
-import { WebSocket } from 'ws';
+import WebSocket from "isomorphic-ws";
 /**
  * Airis API 中的可注册动作。
  */
@@ -20,12 +20,15 @@ export interface ActionCommand {
     name: string;
     data: string;
 }
-export declare class Websocket {
+export declare class AirisClient {
     uri: string | null;
     ws: WebSocket | null;
     gameName: string | null;
     private _actionCallback;
     private _pendingActions;
+    connect(uri: string): Promise<void>;
+    disconnect(): void;
+    isConnected(): boolean;
     /**
      * 这条消息应在游戏开始时立即发送, 以告知 Airis 游戏正在运行.
      *
@@ -95,7 +98,4 @@ export declare class Websocket {
      * 在 connect() 成功之后调用，不应手动调用。
      */
     private _listen;
-    connect(uri: string): Promise<void>;
-    disconnect(): void;
-    isConnected(): boolean;
 }

@@ -1,10 +1,10 @@
-from airis_sdk import Websocket, Action
+from airis_sdk import AirisClient, Action
 from simpleeval import simple_eval
 import json
 import asyncio
 
 async def main():
-    client = Websocket()
+    client = AirisClient()
     await client.connect("ws://localhost:8000/game")
     await client.startup("calculator")
 

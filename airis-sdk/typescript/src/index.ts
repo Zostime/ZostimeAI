@@ -3,7 +3,7 @@
 https://github.com/VedalAI/neuro-sdk/blob/main/API/SPECIFICATION.md
 */
 
-import { WebSocket } from 'ws';
+import WebSocket from "isomorphic-ws";
 
 /**
  * Airis API 中的可注册动作。
@@ -29,7 +29,7 @@ export interface ActionCommand {
 }
 
 // noinspection JSUnusedGlobalSymbols
-export class Websocket {
+export class AirisClient {
 
     uri: string | null = null;
     ws: WebSocket | null = null;
@@ -42,6 +42,42 @@ export class Websocket {
             reject: (reason?: any) => void;
         }
     >();
+
+    async connect(uri: string): Promise<void> {
+        this.uri = uri;
+
+        const ws = new WebSocket(uri) as WebSocket;
+        this.ws = ws;
+
+        return new Promise<void>((resolve, reject) => {
+
+            ws.addEventListener("open", () => {
+                this._listen();
+                resolve();
+            });
+
+            ws.addEventListener("error", (err: any) => {
+                reject(new Error(`连接失败: ${err?.message || err}`));
+            });
+
+        });
+    }
+
+    disconnect(): void {
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+        }
+
+        for (const [, p] of this._pendingActions) {
+            p.reject(new Error("WebSocket disconnected"));
+        }
+        this._pendingActions.clear();
+    }
+
+    isConnected(): boolean {
+        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    }
 
     /**
      * 这条消息应在游戏开始时立即发送, 以告知 Airis 游戏正在运行.
@@ -219,65 +255,37 @@ export class Websocket {
     private _listen(): void {
         if (!this.ws) return;
 
-        this.ws.on('message', async (data: Buffer) => {
+        this.ws.addEventListener('message', (event: any) => {
             try {
-                const msg = JSON.parse(data.toString());
+                const raw = event.data;
+                const msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString());
                 if (msg.command === 'action') {
-                    const payload = msg.data;
-                    const id = payload.id;
+                    const payload = msg.data as ActionCommand;
 
-                    const pending = this._pendingActions.get(id);
+                    const pending = this._pendingActions.get(payload.id);
                     if (pending) {
                         pending.resolve(payload);
-                        this._pendingActions.delete(id);
+                        this._pendingActions.delete(payload.id);
                         return;
                     }
 
                     if (this._actionCallback) {
-                        await this._actionCallback(payload);
+                        this._actionCallback(payload);
                     }
                 }
-            } catch {
-            }
+            } catch {}
         });
 
-        this.ws.on('close', () => {
+        this.ws.addEventListener('close', () => {
             for (const [, pending] of this._pendingActions) {
-                pending.reject(new Error("WebSocket disconnected"));
+                pending.reject(new Error('WebSocket disconnected'));
             }
             this._pendingActions.clear();
             this.ws = null;
         });
 
-        this.ws.on('error', () => {});
-    }
-
-    async connect(uri: string): Promise<void> {
-        this.uri = uri;
-        const ws = new WebSocket(uri);
-        this.ws = ws;
-        await new Promise<void>((resolve, reject) => {
-            ws.onopen = () => resolve();
-            ws.onerror = (err: any) => {
-                reject(new Error(`连接失败: ${err?.message || err}`));
-            };
+        this.ws.addEventListener('error', (err: any) => {
+            console.error('WebSocket error:', err);
         });
-        this._listen();
-    }
-
-    disconnect(): void {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
-
-        for (const [, p] of this._pendingActions) {
-            p.reject(new Error("WebSocket disconnected"));
-        }
-        this._pendingActions.clear();
-    }
-
-    isConnected(): boolean {
-        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
     }
 }

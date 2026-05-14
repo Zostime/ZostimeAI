@@ -1,4 +1,4 @@
-from core.common.config import ConfigManager
+from Airis.core.common.config import ConfigManager
 import shutil
 import zipfile
 from pathlib import Path

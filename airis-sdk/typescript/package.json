@@ -3,18 +3,24 @@
   "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": [
-    "dist"
-  ],
+  "browser": "dist/index.js",
+  "module": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
   "scripts": {
     "build": "tsc"
   },
   "dependencies": {
-    "ws": "^8.18.1",
-    "@types/ws": "^8.18.1"
+    "isomorphic-ws": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "@types/ws": "^8.18.1"
+    "typescript": "^5.9.3"
   }
 }

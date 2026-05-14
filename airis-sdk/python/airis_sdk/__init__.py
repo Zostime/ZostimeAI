@@ -1,4 +1,4 @@
-from .websocket import Websocket
+from .websocket import AirisClient
 from .websocket import Action
 
-__all__ = ["Websocket", "Action"]
+__all__ = ["AirisClient", "Action"]

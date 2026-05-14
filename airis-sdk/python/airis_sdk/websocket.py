@@ -24,7 +24,7 @@ class Action:
     description: str
     schema: Optional[Dict[str, Any]] = None
 
-class Websocket:
+class AirisClient:
     def __init__(self):
         self.uri = None
         self.ws = None

@@ -1,19 +1,43 @@
-"use strict";
 /*
 参考了 Neuro API
 https://github.com/VedalAI/neuro-sdk/blob/main/API/SPECIFICATION.md
 */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Websocket = void 0;
-const ws_1 = require("ws");
+import WebSocket from "isomorphic-ws";
 // noinspection JSUnusedGlobalSymbols
-class Websocket {
+export class AirisClient {
     constructor() {
         this.uri = null;
         this.ws = null;
         this.gameName = null;
         this._actionCallback = null;
         this._pendingActions = new Map();
+    }
+    async connect(uri) {
+        this.uri = uri;
+        const ws = new WebSocket(uri);
+        this.ws = ws;
+        return new Promise((resolve, reject) => {
+            ws.addEventListener("open", () => {
+                this._listen();
+                resolve();
+            });
+            ws.addEventListener("error", (err) => {
+                reject(new Error(`连接失败: ${err?.message || err}`));
+            });
+        });
+    }
+    disconnect() {
+        if (this.ws) {
+            this.ws.close();
+            this.ws = null;
+        }
+        for (const [, p] of this._pendingActions) {
+            p.reject(new Error("WebSocket disconnected"));
+        }
+        this._pendingActions.clear();
+    }
+    isConnected() {
+        return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
     }
     /**
      * 这条消息应在游戏开始时立即发送, 以告知 Airis 游戏正在运行.
@@ -169,59 +193,34 @@ class Websocket {
     _listen() {
         if (!this.ws)
             return;
-        this.ws.on('message', async (data) => {
+        this.ws.addEventListener('message', (event) => {
             try {
-                const msg = JSON.parse(data.toString());
+                const raw = event.data;
+                const msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString());
                 if (msg.command === 'action') {
                     const payload = msg.data;
-                    const id = payload.id;
-                    const pending = this._pendingActions.get(id);
+                    const pending = this._pendingActions.get(payload.id);
                     if (pending) {
                         pending.resolve(payload);
-                        this._pendingActions.delete(id);
+                        this._pendingActions.delete(payload.id);
                         return;
                     }
                     if (this._actionCallback) {
-                        await this._actionCallback(payload);
+                        this._actionCallback(payload);
                     }
                 }
             }
-            catch {
-            }
+            catch { }
         });
-        this.ws.on('close', () => {
+        this.ws.addEventListener('close', () => {
             for (const [, pending] of this._pendingActions) {
-                pending.reject(new Error("WebSocket disconnected"));
+                pending.reject(new Error('WebSocket disconnected'));
             }
             this._pendingActions.clear();
             this.ws = null;
         });
-        this.ws.on('error', () => { });
-    }
-    async connect(uri) {
-        this.uri = uri;
-        const ws = new ws_1.WebSocket(uri);
-        this.ws = ws;
-        await new Promise((resolve, reject) => {
-            ws.onopen = () => resolve();
-            ws.onerror = (err) => {
-                reject(new Error(`连接失败: ${err?.message || err}`));
-            };
+        this.ws.addEventListener('error', (err) => {
+            console.error('WebSocket error:', err);
         });
-        this._listen();
-    }
-    disconnect() {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
-        for (const [, p] of this._pendingActions) {
-            p.reject(new Error("WebSocket disconnected"));
-        }
-        this._pendingActions.clear();
-    }
-    isConnected() {
-        return this.ws !== null && this.ws.readyState === ws_1.WebSocket.OPEN;
     }
 }
-exports.Websocket = Websocket;

@@ -1,4 +1,4 @@
-from airis_sdk import Websocket, Action
+from airis_sdk import AirisClient, Action
 from playsound3 import playsound
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ import asyncio
 audios_dir = f"{Path(__file__).parent}/audios"
 
 async def main():
-    client = Websocket()
+    client = AirisClient()
     await client.connect("ws://localhost:8000/game")
     await client.startup("sound_board")
 
