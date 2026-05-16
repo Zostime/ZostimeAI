@@ -38,6 +38,7 @@ class State:
             self.input: dict = {
                 "content": "",
                 "source": "",
+                "ephemeral_context": False,
                 "timestamp": None
             }
 
@@ -108,17 +109,19 @@ class EventHandler:
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-        STATE.agent.memory=build_memory_context(data['input'])
+        STATE.agent.memory=build_memory_context(data['content'])
 
         STATE.env.input = {
-            "content": data['input'],
+            "content": data['content'],
             "source": data['source'],
+            "ephemeral_context": data['ephemeral_context'],
             "timestamp": time.time()
         }
 
         llm_queue.put({
             "source": data['source'],
-            "input": STATE.env.input['content']
+            "content": STATE.env.input['content'],
+            "ephemeral_context": data['ephemeral_context']
         })
 
     # noinspection PyUnusedLocal
@@ -268,7 +271,7 @@ class EventRouter:
                 action_names = data.get("action_names", [])
                 state = data.get("state", "")
                 priority = data.get("priority", "low")
-                ephemeral_context = data.get("ephemeral_context", True)
+                ephemeral_context = data.get("ephemeral_context", False)
 
                 session.forced_action_names = action_names
                 if not ephemeral_context:
@@ -278,11 +281,13 @@ class EventRouter:
                     }
                     STATE.agent.unread_events.append(f"来自{game}的[force]:{session.force_payload}")
 
+
                 EVENT.add_event(
                     event_type="input",
                     data={
                         "source": game,
-                        "input": query
+                        "content": query,
+                        "ephemeral_context": ephemeral_context,
                     },
                     priority=priority
                 )   # 触发LLM
@@ -416,7 +421,8 @@ def handle_user_input():
         event_type="input",
         data={
             "source": USER,
-            "input": user_input,
+            "content": user_input,
+            "ephemeral_context": False,
         },
         priority="high"
     )
@@ -426,6 +432,11 @@ def llm_worker():
         task = llm_queue.get()
         if task is None:
             break
+
+        source = task["source"]
+        content = task["content"]
+        ephemeral_context = task["ephemeral_context"]
+
         system_prompt = PROMPT.build({
             "system.md": {},
             "personality.md": {},
@@ -440,7 +451,7 @@ def llm_worker():
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "name": task['source'], "content": task['input']}
+            {"role": "user", "name": source, "content": content}
         ]
         result = None
         STATE.agent.is_silent = False
@@ -505,7 +516,8 @@ def llm_worker():
                     except StopIteration as e:
                         result = e.value
                         TTS.stream_feed(buf)
-                        MEMORY.add_memory(result['full_content'], user_id="Airis")
+                        if not ephemeral_context:
+                            MEMORY.add_memory(result['full_content'], user_id="Airis")
                         break
 
                 if INTERRUPT.is_interrupted():
@@ -577,7 +589,8 @@ def llm_worker():
                 if INTERRUPT.is_interrupted():
                     break
 
-            MEMORY.add_memory(task['input'], user_id=task['source'])
+            if not ephemeral_context:
+                MEMORY.add_memory(content, user_id=source)
 
         except Exception as e:
             print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
@@ -586,7 +599,7 @@ def llm_worker():
         finally:
             STATE.env.is_speaking = False
             STATE.agent.is_silent = True
-            STATE.agent.unread_events = []  # 清空未读消息
+            STATE.agent.unread_events.clear()  # 清空未读消息
 
 def tts_worker():
     while True:
