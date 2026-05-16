@@ -11,11 +11,11 @@ Airis/core/llm/models
 # 模型文件
 Airis/data/models/*
 
-# server
-server/*
-!server/painter/client.py
-!server/sound_board
-!server/calculator
+# services
+services/*
+!services/painter/client.py
+!services/sound_board
+!services/calculator
 
 # .env
 Airis/data/config/.env

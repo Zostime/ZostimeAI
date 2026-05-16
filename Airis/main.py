@@ -23,7 +23,7 @@ from core.common.logger import LogManager
 # 配置
 USER = "Zostime"
 ENABLE_STT = False
-ENABLE_TOOLS = True    # 某些LLM不支持tool_calls则设为False
+ENABLE_TOOLS = True    # 某些 LLM 不支持 tool_calls 则设为 False
 
 class State:
     class Agent:
