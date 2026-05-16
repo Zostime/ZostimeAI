@@ -67,8 +67,8 @@ ZostimeAI/
 ├─docs/                         # 文档
 │   ├─airis-api/
 │   └─... 
-├─server/                       # 外部服务
-│   └─...        
+└─services/                     # 外部服务
+    └─...        
 ```
 ## 快速开始
 - **复制 [.env.example](../Airis/data/config/.env.example) 为 .env 后填充真实值**

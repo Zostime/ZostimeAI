@@ -74,12 +74,12 @@ ZostimeAI/
 ├─docs/                         # Document
 │   ├─airis-api/
 │   └─...                      
-└─server/                       # External services
+└─services/                     # External services
     └─...  
 ```
 ## Quick Start
 - **Copy [.env.example](Airis/data/config/.env.example) as .env and fill in the actual values**
-- **Open your [Airis](./Airis) folder with PowerShell**
+- **Open your [Airis](/Airis) folder with PowerShell**
 - **Create virtual environment (first time)**
 - `python -m venv .venv`
 - **Activate virtual environment (Windows)**
