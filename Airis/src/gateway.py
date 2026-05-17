@@ -86,23 +86,28 @@ class ProtocolRouter:
 
         cls.ws = WebSocketServer()
 
-        cls.ws.on("state", cls.State.handle)
+        cls.ws.on("runtime", cls.Runtime.handle)
         cls.ws.on("game", cls.Game.handle)
+        # ...
 
         cls._initialized = True
 
         threading.Thread(target=lambda: asyncio.run(cls.ws.run()), daemon=True).start()
 
-    class State:
+    class Runtime:
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int):  # noqa
-            async for msg in websocket: pass  # noqa
+            async for msg in websocket:
+                runtime.LOGGER.debug(f"[websocket] {client_id} -> {msg}")
 
         @staticmethod
-        def emit(data: Any):
+        def emit(event: str, data: dict[str, Any]):
             ProtocolRouter.ws.publish(
-                path="state",
-                data=data
+                path="runtime",
+                data={
+                    "event": event,
+                    "data": data
+                }
             )
 
     class Game:
