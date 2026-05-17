@@ -13,6 +13,8 @@ ZostimeAI/
 ├─Airis/
 │   ├─src/
 │   │   ├─__init__.py     
+│   │   ├─runtime.py                # Global subsystem
+│   │   ├─gateway.py                # WebSocket protocol gateway
 │   │   └─core/                     # Core
 │   │       ├─__init__.py      
 │   │       ├─common/               # Public module

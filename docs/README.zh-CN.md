@@ -12,7 +12,9 @@
 ZostimeAI/
 ├─Airis/
 │   ├─src/       
-│   │   ├─__init__.py                    
+│   │   ├─__init__.py       
+│   │   ├─runtime.py                # 全局子系统
+│   │   ├─gateway.py                # WebSocket协议网关
 │   │   └─core/                     # 核心
 │   │       ├─__init__.py     
 │   │       ├─common/               # 公共模块

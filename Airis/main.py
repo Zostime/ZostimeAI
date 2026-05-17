@@ -1,24 +1,22 @@
 from websockets.server import WebSocketServerProtocol # noqa
-from typing import Any, Literal, Optional, Dict
-from collections import defaultdict
-from urllib.parse import urlparse
-import websockets
+from typing import Any, Literal
 import threading
 import datetime
 import keyboard
-import asyncio
 import queue
 import time
 import json
 
+from src.core.prompts.manager import PromptBuilder
+from src.core.memory.manager import MemoryManager
+from src.core.common.config import ConfigManager
+from src.core.common.logger import LogManager
 from src.core.tts.client import TTSClient
 from src.core.stt.client import STTClient
 from src.core.llm.client import LLMClient
-from src.core.memory.manager import MemoryManager
-from src.core.prompts.manager import PromptBuilder
 
-from src.core.common.config import ConfigManager
-from src.core.common.logger import LogManager
+import src.runtime as runtime
+from src.gateway import ProtocolRouter
 
 # 配置
 USER = "Zostime"
@@ -102,16 +100,16 @@ class EventManager:
                         daemon=True
                     ).start()
                 except Exception as e:
-                    LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
+                    runtime.LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
 
 class EventHandler:
     @staticmethod
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-        STATE.agent.memory=build_memory_context(data['content'])
+        runtime.STATE.agent.memory=build_memory_context(data['content'])
 
-        STATE.env.input = {
+        runtime.STATE.env.input = {
             "content": data['content'],
             "source": data['source'],
             "ephemeral_context": data['ephemeral_context'],
@@ -120,7 +118,7 @@ class EventHandler:
 
         llm_queue.put({
             "source": data['source'],
-            "content": STATE.env.input['content'],
+            "content": runtime.STATE.env.input['content'],
             "ephemeral_context": data['ephemeral_context']
         })
 
@@ -129,198 +127,6 @@ class EventHandler:
     def interrupt_handler(event):
         TTS.interrupt()
 
-class EventBus:
-    def __init__(self):
-        self.clients = defaultdict(dict)
-        self.queue = asyncio.Queue()
-        self.handlers = {}
-        self.loop = None
-
-    def on(self, path: str, handler):
-        self.handlers[path] = handler
-
-    async def run(self):
-        self.loop = asyncio.get_running_loop()
-        ws_url = CONFIG.get_json("system.websocket_url")
-        parsed = urlparse(ws_url)
-        host = parsed.hostname
-        port = parsed.port
-        async with websockets.serve(self._connection_handler, host, port):
-            await self._sender_loop()
-
-    async def _connection_handler(self, websocket: WebSocketServerProtocol):
-        path = websocket.path.lstrip("/")
-        client_id = id(websocket)
-        self.clients[path][client_id] = websocket
-
-        try:
-            if path in self.handlers:
-                await self.handlers[path](websocket, client_id)
-        except websockets.ConnectionClosed:
-            LOGGER.logger.debug(f"[websocket] {client_id} -> {path} connection closed.")
-        except Exception:  # noqa
-            pass
-        finally:
-            self.clients[path].pop(client_id, None)
-
-    async def publish_async(self, path: str, data: Any, client_id: int = None):
-        await self.queue.put((path, client_id, data))
-
-    def publish(self, path: str, data: Any, client_id: int = None):
-        if self.loop is None:
-            raise RuntimeError("Event loop not ready")
-        asyncio.run_coroutine_threadsafe(
-            self.queue.put((path, client_id, data)),
-            self.loop
-        )
-
-    async def _sender_loop(self):
-        while True:
-            path, client_id, data = await self.queue.get()
-
-            targets = []
-
-            if client_id is not None:
-                ws = self.clients.get(path, {}).get(client_id)
-                if ws:
-                    targets.append(ws)
-            else:
-                targets = list(self.clients.get(path, {}).values())
-
-            msg = json.dumps(data)
-
-            for ws in targets:
-                try:
-                    await ws.send(msg)
-                except:  # noqa
-                    pass
-
-class EventRouter:
-    class State:
-        @staticmethod
-        async def handle(websocket: WebSocketServerProtocol, client_id: int): # noqa
-            async for msg in websocket: pass # noqa
-
-        @staticmethod
-        def emit(data: Any):
-            EVENT_BUS.publish(
-                path = "state",
-                data = data
-            )
-
-    class Game:
-        sessions: Dict[int, 'EventRouter.Game.Session'] = {}  # client_id -> Session
-
-        class Session:
-            def __init__(self, client_id: int, websocket: WebSocketServerProtocol):
-                self.client_id = client_id
-                self.websocket = websocket
-                self.game_name: Optional[str] = None
-                self.registered_actions: dict = {}
-                self.pending_action_id: Optional[str] = None
-                self.pending_actions: Dict[str, asyncio.Future] = {}
-                self.forced_action_names: list = []
-                self.force_payload: Optional[dict] = None
-
-        @staticmethod
-        async def handle(websocket: WebSocketServerProtocol, client_id: int):
-            session = EventRouter.Game.Session(client_id, websocket)
-            EventRouter.Game.sessions[client_id] = session
-
-            try:
-                async for raw_msg in websocket:
-                    try:
-                        data = json.loads(raw_msg)
-                    except json.JSONDecodeError:
-                        LOGGER.logger.warning(f"Invalid JSON: {raw_msg}")
-                        continue
-                    await EventRouter.Game._handle_message(session, data)
-            except websockets.ConnectionClosed:
-                pass
-            finally:
-                EventRouter.Game.sessions.pop(client_id, None)
-
-        @staticmethod
-        async def _handle_message(session, message):
-            command = message.get("command")
-            data = message.get("data")
-            game = message.get("game")
-
-            if command == "startup":
-                session.game_name = game
-
-            elif command == "context":
-                message = data.get("message", "")
-                silent = data.get("silent", True)
-                if silent:
-                    STATE.agent.unread_events.append(f"来自{game}的msg:{message}")
-                else:
-                    STATE.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
-
-            elif command == "actions/register":
-                for act in data.get("actions", []):
-                    session.registered_actions[act["name"]] = act
-
-            elif command == "actions/unregister":
-                for name in data.get("action_names", []):
-                    session.registered_actions.pop(name, None)
-
-            elif command == "actions/force":
-                query = data.get("query", "")
-                action_names = data.get("action_names", [])
-                state = data.get("state", "")
-                priority = data.get("priority", "low")
-                ephemeral_context = data.get("ephemeral_context", False)
-
-                session.forced_action_names = action_names
-                if not ephemeral_context:
-                    session.force_payload = {
-                        "query": query,
-                        "state": state
-                    }
-                    STATE.agent.unread_events.append(f"来自{game}的[force]:{session.force_payload}")
-
-
-                EVENT.add_event(
-                    event_type="input",
-                    data={
-                        "source": game,
-                        "content": query,
-                        "ephemeral_context": ephemeral_context,
-                    },
-                    priority=priority
-                )   # 触发LLM
-
-            elif command == "action/result":
-                action_id = data.get("id")
-                if not action_id:
-                    return
-                future = session.pending_actions.pop(action_id, None)
-                if future and not future.done():
-                    future.set_result(data)
-
-        @staticmethod
-        def run_action(session, data):
-            async def _action_worker():
-                action_id = data["data"]["id"]
-
-                loop = asyncio.get_running_loop()
-                future = loop.create_future()
-
-                session.pending_actions[action_id] = future
-
-                await EVENT_BUS.publish_async(
-                    path="game",
-                    client_id=session.client_id,
-                    data=data
-                )
-
-                return await future
-            return asyncio.run_coroutine_threadsafe(
-                _action_worker(),
-                EVENT_BUS.loop
-            ).result()
-
 class InterruptManager:
     def __init__(self):
         self.event = threading.Event()
@@ -328,7 +134,7 @@ class InterruptManager:
 
     def trigger(self):
         self.event.set()
-        EVENT.add_event(
+        runtime.EVENT.add_event(
             event_type="interrupt",
             data=None,
             priority="critical",
@@ -407,7 +213,7 @@ def build_memory_context(user_input) -> str:
     return "\n".join(parts)
 
 def handle_user_input():
-    STATE.env.is_speaking = True
+    runtime.STATE.env.is_speaking = True
     print()
     if ENABLE_STT:
         while True:
@@ -421,7 +227,7 @@ def handle_user_input():
     else:
         user_input = input(f"{USER}:")
 
-    EVENT.add_event(
+    runtime.EVENT.add_event(
         event_type="input",
         data={
             "source": USER,
@@ -445,11 +251,11 @@ def llm_worker():
             "system.md": {},
             "personality.md": {},
             "memory.md": {
-                "memory": STATE.agent.memory,
+                "memory": runtime.STATE.agent.memory,
             },
             "runtime_state.md": {
                 "current_time": datetime.datetime.now(),
-                "unread_events": STATE.agent.unread_events,
+                "unread_events": runtime.STATE.agent.unread_events,
             }
         })
 
@@ -465,7 +271,7 @@ def llm_worker():
                 tool_choice = "auto"
                 forced_tools = []
 
-                for session in EventRouter.Game.sessions.values():
+                for session in ProtocolRouter.Game.sessions.values():
                     for action in session.registered_actions.values():
                         safe_name = f"{session.client_id}_{action['name']}"
 
@@ -547,7 +353,7 @@ def llm_worker():
                     try:
                         session, real_name = tool_map[tool_call["name"]]
 
-                        result = EventRouter.Game.run_action(
+                        result = ProtocolRouter.Game.run_action(
                             session=session,
                             data={
                                 "command": "action",
@@ -584,10 +390,10 @@ def llm_worker():
         except Exception as e:
             print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
             TTS.stream_feed("Someone tell Zostime there is a problem with my AI.")
-            LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
+            runtime.LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
-            STATE.env.is_speaking = False
-            STATE.agent.unread_events.clear()  # 清空未读消息
+            runtime.STATE.env.is_speaking = False
+            runtime.STATE.agent.unread_events.clear()  # 清空未读消息
 
 def tts_worker():
     while True:
@@ -598,8 +404,8 @@ if __name__ == '__main__':
     llm_queue = queue.Queue()
 
     try:
-        CONFIG = ConfigManager()
-        LOGGER = LogManager("system")
+        runtime.CONFIG = ConfigManager()
+        runtime.LOGGER = LogManager("system")
 
         LLM = LLMClient()
         TTS = TTSClient()
@@ -607,19 +413,16 @@ if __name__ == '__main__':
         MEMORY = MemoryManager()
         PROMPT = PromptBuilder()
 
-        STATE = State()
-        EVENT = EventManager()
-        EVENT.on("input", EventHandler.input_handler)
-        EVENT.on("interrupt", EventHandler.interrupt_handler)
+        runtime.STATE = State()
+        runtime.EVENT = EventManager()
+        runtime.EVENT.on("input", EventHandler.input_handler)
+        runtime.EVENT.on("interrupt", EventHandler.interrupt_handler)
 
         INTERRUPT = InterruptManager()
-        EVENT_BUS = EventBus()
-        EVENT_BUS.on("state", EventRouter.State.handle)
-        EVENT_BUS.on("game", EventRouter.Game.handle)
-
+        ProtocolRouter.setup()
+        
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
-        threading.Thread(target=lambda: asyncio.run(EVENT_BUS.run()), daemon=True).start()
 
         threading.Event().wait() # loop
 
