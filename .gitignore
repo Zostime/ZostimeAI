@@ -5,8 +5,8 @@
 *.egg-info/
 
 # LLM本地服务器
-Airis/core/llm/server.py
-Airis/core/llm/models
+Airis/src/core/llm/server.py
+Airis/src/core/llm/models
 
 # 模型文件
 Airis/data/models/*

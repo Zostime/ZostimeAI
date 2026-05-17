@@ -11,14 +11,14 @@ import queue
 import time
 import json
 
-from core.tts.client import TTSClient
-from core.stt.client import STTClient
-from core.llm.client import LLMClient
-from core.memory.manager import MemoryManager
-from core.prompts.manager import PromptBuilder
+from src.core.tts.client import TTSClient
+from src.core.stt.client import STTClient
+from src.core.llm.client import LLMClient
+from src.core.memory.manager import MemoryManager
+from src.core.prompts.manager import PromptBuilder
 
-from core.common.config import ConfigManager
-from core.common.logger import LogManager
+from src.core.common.config import ConfigManager
+from src.core.common.logger import LogManager
 
 # 配置
 USER = "Zostime"
@@ -128,7 +128,6 @@ class EventHandler:
     @staticmethod
     def interrupt_handler(event):
         TTS.interrupt()
-        STATE.agent.is_silent = True
 
 class EventBus:
     def __init__(self):
@@ -454,7 +453,6 @@ def llm_worker():
             {"role": "user", "name": source, "content": content}
         ]
         result = None
-        STATE.agent.is_silent = False
         try:
             while True:
                 tools = []
@@ -507,12 +505,6 @@ def llm_worker():
                             TTS.stream_feed(buf)
                             buf = ""
 
-                        EventRouter.State.emit(
-                            data={
-                                "type": "llm_stream",
-                                "data": chunk
-                            }
-                        )
                     except StopIteration as e:
                         result = e.value
                         TTS.stream_feed(buf)
@@ -574,18 +566,13 @@ def llm_worker():
 
                     except Exception as e:
                         output = f"工具执行失败: {e}"
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
                         "content": str(output)
                     })
 
-                    EventRouter.State.emit(
-                            data={
-                            "type": "tool_call",
-                            "data": tool_call["name"]
-                        }
-                    )
                 if INTERRUPT.is_interrupted():
                     break
 
@@ -598,17 +585,12 @@ def llm_worker():
             LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
             STATE.env.is_speaking = False
-            STATE.agent.is_silent = True
             STATE.agent.unread_events.clear()  # 清空未读消息
 
 def tts_worker():
     while True:
-        try:
-            word = TTS.subtitle_queue.get(timeout=0.1)
-            STATE.agent.is_silent = False
-            print(word, end='', flush=True)
-        except queue.Empty:
-            STATE.agent.is_silent = True
+        word = TTS.subtitle_queue.get()
+        print(word, end='', flush=True)
 
 if __name__ == '__main__':
     llm_queue = queue.Queue()
