@@ -300,21 +300,26 @@ class EventRouter:
                     future.set_result(data)
 
         @staticmethod
-        async def run_action(session, data):
-            action_id = data["data"]["id"]
+        def run_action(session, data):
+            async def _action_worker():
+                action_id = data["data"]["id"]
 
-            loop = asyncio.get_running_loop()
-            future = loop.create_future()
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
 
-            session.pending_actions[action_id] = future
+                session.pending_actions[action_id] = future
 
-            await EVENT_BUS.publish_async(
-                path="game",
-                client_id=session.client_id,
-                data=data
-            )
+                await EVENT_BUS.publish_async(
+                    path="game",
+                    client_id=session.client_id,
+                    data=data
+                )
 
-            return await future
+                return await future
+            return asyncio.run_coroutine_threadsafe(
+                _action_worker(),
+                EVENT_BUS.loop
+            ).result()
 
 class InterruptManager:
     def __init__(self):
@@ -542,21 +547,18 @@ def llm_worker():
                     try:
                         session, real_name = tool_map[tool_call["name"]]
 
-                        future = asyncio.run_coroutine_threadsafe(
-                            EventRouter.Game.run_action(
-                                session=session,
-                                data={
-                                    "command": "action",
-                                    "data": {
-                                        "id": tool_call["id"],
-                                        "name": real_name,
-                                        "data": json.dumps(tool_call.get("arguments", {}))
-                                    }
+                        result = EventRouter.Game.run_action(
+                            session=session,
+                            data={
+                                "command": "action",
+                                "data": {
+                                    "id": tool_call["id"],
+                                    "name": real_name,
+                                    "data": json.dumps(tool_call.get("arguments", {}))
                                 }
-                            ),
-                            EVENT_BUS.loop
+                            }
                         )
-                        result = future.result()
+
                         if result.get("success"):
                             session.forced_action_names.clear()
                             session.force_payload = None
