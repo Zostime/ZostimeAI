@@ -3,8 +3,8 @@ import threading
 import azure.cognitiveservices.speech as speechsdk # noqa
 import pyaudio
 
-from ..common.config import ConfigManager   #配置管理器
-from ..common.logger import LogManager      #日志管理器
+from ..common.config import ConfigManager
+from ..common.logger import LogManager
 
 class TTSClient:
     SENTENCE_END = object()
@@ -48,6 +48,8 @@ class TTSClient:
         self._init()
         self._start_threads()
 
+        self._text_cache = ""
+
     def _init(self):
         speech_config = speechsdk.SpeechConfig(
             subscription=self.speech_key, region=self.service_region
@@ -78,12 +80,7 @@ class TTSClient:
         )
 
     def _on_word_boundary(self, evt):
-        try:
-            self.boundary_queue.put_nowait(evt)
-        except queue.Full:
-            self.logger.warning("Word boundary queue is full, event dropped.")
-        except Exception as e:
-            self.logger.error(f"Error putting word boundary event: {e}")
+        self.boundary_queue.put_nowait(evt)
 
     def _start_threads(self):
         self.player_thread = threading.Thread(target=self._player_worker, daemon=True)
@@ -94,7 +91,7 @@ class TTSClient:
         self.subtitle_thread.start()
 
     def _subtitle_worker(self):
-        while self.running:
+        while self.running: # noqa
             try:
                 base_frame = self.base_frame_queue.get(timeout=0.1)
             except queue.Empty:
@@ -124,7 +121,11 @@ class TTSClient:
                     with self.played_frames_lock:
                         current_frame = self.played_frames
                     if current_frame >= target_frame:
-                        self.subtitle_queue.put(text)
+                        index = self._text_cache.find(text)
+                        if index != -1:
+                            subtitle_chunk = self._text_cache[:index + len(text)]
+                            self._text_cache = self._text_cache[index + len(text):]
+                            self.subtitle_queue.put(subtitle_chunk)
                         break
 
     def _on_synthesizing(self, evt):
@@ -191,7 +192,7 @@ class TTSClient:
                 break
 
     def _synth_worker(self):
-        while self.running:
+        while self.running: # noqa
             try:
                 text = self.text_queue.get(timeout=0.5)
             except queue.Empty:
@@ -232,10 +233,12 @@ class TTSClient:
     def stream_feed(self, text: str) -> None:
         if not self.running:
             return
+        self._text_cache += text
         self.text_queue.put(text)
 
     def interrupt(self):
         self.stop_requested = True
+        self._text_cache = ""
         self.interrupt_audio.set()
         try:
             self.synthesizer.stop_speaking_async().get()
@@ -304,3 +307,5 @@ class TTSClient:
             self.player.close()
         if self.p:
             self.p.terminate()
+
+        self._text_cache = ""

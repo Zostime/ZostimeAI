@@ -1,4 +1,4 @@
-from websockets.server import WebSocketServerProtocol # noqa
+from websockets.server import WebSocketServerProtocol  # noqa
 from typing import Any, Literal
 import threading
 import datetime
@@ -22,7 +22,7 @@ from src.state import State
 # 配置
 USER = "Zostime"
 ENABLE_STT = False
-ENABLE_TOOLS = True    # 某些 LLM 不支持 tool_calls 则设为 False
+ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
 
 class EventManager:
     PRIORITY_MAP = {
@@ -31,6 +31,7 @@ class EventManager:
         "medium": 2,
         "low": 3,
     }  # EVENT 优先级
+
     def __init__(self):
         self._event_queue = queue.PriorityQueue()
         threading.Thread(target=self.event_loop, daemon=True).start()
@@ -87,7 +88,7 @@ class EventHandler:
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-        runtime.STATE.agent.memory=build_memory_context(data['content'])
+        runtime.STATE.agent.memory = build_memory_context(data['content'])
 
         runtime.STATE.env.input = {
             "content": data['content'],
@@ -138,9 +139,9 @@ class InterruptManager:
                 handle_user_input()
 
 def build_memory_context(user_input) -> str:
-    user_ltm = MEMORY.search_ltm(user_input,USER)    # [{'memory': str, 'score': datetime}, ...]
+    user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
     assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
-    user_stm = MEMORY.search_stm(USER)               # [{"memory": str, "timestamp": datetime}, ...]
+    user_stm = MEMORY.search_stm(USER)  # [{"memory": str, "timestamp": datetime}, ...]
     assistant_stm = MEMORY.search_stm('Airis')
 
     note = MEMORY.note.read()
@@ -217,6 +218,7 @@ def handle_user_input():
         priority="high"
     )
 
+
 def llm_worker():
     while True:
         task = llm_queue.get()
@@ -279,7 +281,7 @@ def llm_worker():
                 gen = LLM.chat_stream(
                     messages=messages,
                     tools=tools if ENABLE_TOOLS else None,
-                    tool_choice = tool_choice
+                    tool_choice=tool_choice
                 )
                 buf = ""
                 chars = ['.', '。', '!', '！', '?', '？', '\n']
@@ -382,8 +384,8 @@ def llm_worker():
                 MEMORY.add_memory(content, user_id=source)
 
         except Exception as e:
-            print(f"Someone tell Zostime there is a problem with my AI.", flush=True)
-            TTS.stream_feed("Someone tell Zostime there is a problem with my AI.")
+            print(f"Someone tell {USER} there is a problem with my AI.", flush=True)
+            TTS.stream_feed(f"Someone tell {USER} there is a problem with my AI.")
             runtime.LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
             runtime.STATE.env.is_speaking = False
@@ -414,11 +416,11 @@ if __name__ == '__main__':
 
         INTERRUPT = InterruptManager()
         ProtocolRouter.setup()
-        
+
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
 
-        threading.Event().wait() # loop
+        threading.Event().wait()  # loop
 
     except KeyboardInterrupt:
         llm_queue.put(None)
