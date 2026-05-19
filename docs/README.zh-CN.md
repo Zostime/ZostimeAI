@@ -15,6 +15,8 @@ ZostimeAI/
 │   │   ├─__init__.py       
 │   │   ├─runtime.py                # 全局子系统
 │   │   ├─gateway.py                # WebSocket协议网关
+│   │   ├─state.py                  # 运行时状态
+│   │   ├─event_bus.py              # 优先级调度事件总线
 │   │   └─core/                     # 核心
 │   │       ├─__init__.py     
 │   │       ├─common/               # 公共模块
@@ -61,13 +63,20 @@ ZostimeAI/
 │   ├─main.py                       # 程序主入口
 │   └─requirements.txt              # 项目依赖
 ├─airis-sdk/                        # SDK
-│   └─python/                       
-│       ├─airis_sdk/                # Python包
-│       │   ├─__init__.py      
-│       │   ├─websocket.py  
-│       │   └─devtools/ 
-│       │      └─websocket_proxy.py   
-│       └─pyproject.toml      
+│   ├─python/                       
+│   │   ├─airis_sdk/                # Python包
+│   │   │   ├─__init__.py      
+│   │   │   ├─websocket.py  
+│   │   │   └─devtools/ 
+│   │   │      └─websocket_proxy.py   
+│   │   └─pyproject.toml   
+│   └─typescript/                   # Typescript包
+│       ├─src/
+│       │   ├─index.ts
+│       │   └─websocket.ts
+│       ├─dist/
+│       ├─package.json
+│       └─tsconfig.json 
 ├─docs/                             # 文档
 │   ├─airis-api/
 │   └─... 

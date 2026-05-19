@@ -180,9 +180,9 @@ class ProtocolRouter:
                         "query": query,
                         "state": state
                     }
-                    runtime.STATE.agent.unread_events.append(f"来自{game}的[force]:{session.force_payload}")
+                    runtime.STATE.agent.unread_events.append(f"来自{game}的[force]: {session.force_payload}")
 
-                runtime.EVENT.add_event(
+                runtime.EVENT_BUS.emit(
                     event_type="input",
                     data={
                         "source": game,

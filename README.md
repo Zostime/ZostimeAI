@@ -15,6 +15,8 @@ ZostimeAI/
 │   │   ├─__init__.py     
 │   │   ├─runtime.py                # Global subsystem
 │   │   ├─gateway.py                # WebSocket protocol gateway
+│   │   ├─state.py                  # Runtime state
+│   │   ├─event_bus.py              # Priority Scheduling Event Bus
 │   │   └─core/                     # Core
 │   │       ├─__init__.py      
 │   │       ├─common/               # Public module
@@ -68,7 +70,7 @@ ZostimeAI/
 │   │   │   └─devtools/ 
 │   │   │      └─websocket_proxy.py   
 │   │   └─pyproject.toml   
-│   └─typescript/
+│   └─typescript/                   # Typescript package
 │       ├─src/
 │       │   ├─index.ts
 │       │   └─websocket.ts

@@ -1,5 +1,3 @@
-from websockets.server import WebSocketServerProtocol  # noqa
-from typing import Any, Literal
 import threading
 import datetime
 import keyboard
@@ -17,6 +15,7 @@ from src.core.llm.client import LLMClient
 
 import src.runtime as runtime
 from src.gateway import ProtocolRouter
+from src.event_bus import EventBus
 from src.state import State
 
 # 配置
@@ -24,66 +23,7 @@ USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
 
-class EventManager:
-    PRIORITY_MAP = {
-        "critical": 0,
-        "high": 1,
-        "medium": 2,
-        "low": 3,
-    }  # EVENT 优先级
-
-    def __init__(self):
-        self._event_queue = queue.PriorityQueue()
-        threading.Thread(target=self.event_loop, daemon=True).start()
-        self._handlers = {}
-        self._lock = threading.Lock()
-
-    def on(self, event_type: str, handler) -> None:
-        with self._lock:
-            if event_type not in self._handlers:
-                self._handlers[event_type] = []
-            self._handlers[event_type].append(handler)
-
-    def add_event(self,
-                  event_type: str,
-                  data: Any = None,
-                  priority: Literal["low", "medium", "high", "critical"] = "low"
-                  ) -> None:
-        if priority not in self.PRIORITY_MAP:
-            raise ValueError(f"未定义的EVENT优先级: {priority}")
-
-        priority_val = self.PRIORITY_MAP[priority]
-        timestamp = time.time()
-        event = {
-            "timestamp": timestamp,
-            "priority": priority,
-            "type": event_type,
-            "data": data
-        }
-        # (优先级, 时间戳, event)
-        self._event_queue.put((priority_val, timestamp, event))
-
-    def event_loop(self):
-        while True:
-            _, _, event = self._event_queue.get()
-            if event is None:
-                break
-
-            with self._lock:
-                handlers = list(self._handlers.get(event["type"], [])) + \
-                           list(self._handlers.get("*", []))
-
-            for handler in handlers:
-                try:
-                    threading.Thread(
-                        target=handler,
-                        args=(event,),
-                        daemon=True
-                    ).start()
-                except Exception as e:
-                    runtime.LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
-
-class EventHandler:
+class EventHandlers:
     @staticmethod
     def input_handler(event):
         INTERRUPT.clear()
@@ -115,7 +55,7 @@ class InterruptManager:
 
     def trigger(self):
         self.event.set()
-        runtime.EVENT.add_event(
+        runtime.EVENT_BUS.emit(
             event_type="interrupt",
             data=None,
             priority="critical",
@@ -208,7 +148,7 @@ def handle_user_input():
     else:
         user_input = input(f"{USER}:")
 
-    runtime.EVENT.add_event(
+    runtime.EVENT_BUS.emit(
         event_type="input",
         data={
             "source": USER,
@@ -217,7 +157,6 @@ def handle_user_input():
         },
         priority="high"
     )
-
 
 def llm_worker():
     while True:
@@ -410,9 +349,9 @@ if __name__ == '__main__':
         PROMPT = PromptBuilder()
 
         runtime.STATE = State()
-        runtime.EVENT = EventManager()
-        runtime.EVENT.on("input", EventHandler.input_handler)
-        runtime.EVENT.on("interrupt", EventHandler.interrupt_handler)
+        runtime.EVENT_BUS = EventBus()
+        runtime.EVENT_BUS.on("input", EventHandlers.input_handler)
+        runtime.EVENT_BUS.on("interrupt", EventHandlers.interrupt_handler)
 
         INTERRUPT = InterruptManager()
         ProtocolRouter.setup()
@@ -420,6 +359,7 @@ if __name__ == '__main__':
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
 
+        runtime.LOGGER.logger.info("初始化完成")
         threading.Event().wait()  # loop
 
     except KeyboardInterrupt:

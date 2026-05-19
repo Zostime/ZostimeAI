@@ -1,4 +1,4 @@
 CONFIG = None
 LOGGER = None
 STATE = None
-EVENT = None
+EVENT_BUS = None
