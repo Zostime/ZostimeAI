@@ -81,34 +81,14 @@ class InterruptManager:
 def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
     assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
-    user_stm = MEMORY.search_stm(USER)  # [{"memory": str, "timestamp": datetime}, ...]
-    assistant_stm = MEMORY.search_stm('Airis')
 
     note = MEMORY.note.read()
-
-    # STM排序(最新在前)
-    user_stm = sorted(user_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
-    assistant_stm = sorted(assistant_stm, key=lambda x: x.get("timestamp", 0), reverse=True)
 
     # LTM排序(相关性高在前)
     user_ltm = sorted(user_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
     assistant_ltm = sorted(assistant_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
 
     parts = ["[记忆上下文]"]
-
-    if user_stm:
-        parts.append("\n用户短期上下文:")
-        for i, entry in enumerate(user_stm):
-            tag = "最新" if i == 0 else "较新"
-            memory = entry.get("memory", "")
-            parts.append(f"- [{tag}] {memory}")
-
-    if assistant_stm:
-        parts.append("\n助手短期上下文:")
-        for i, entry in enumerate(assistant_stm):
-            tag = "最新" if i == 0 else "较新"
-            memory = entry.get("memory", "")
-            parts.append(f"- [{tag}] {memory}")
 
     if user_ltm:
         parts.append("\n用户长期记忆:")
@@ -180,10 +160,25 @@ def llm_worker():
             }
         })
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "name": source, "content": content}
-        ]
+        messages = [{"role": "system", "content": system_prompt}] # 预备 messages
+
+        # STM排序(最新在前)
+        user_stm = MEMORY.search_stm(USER)  # [{"memory": str, "timestamp": datetime}, ...]
+        assistant_stm = MEMORY.search_stm('Airis')
+        user_stm = sorted(user_stm, key=lambda x: x.get("timestamp", 0))
+        assistant_stm = sorted(assistant_stm, key=lambda x: x.get("timestamp", 0))
+        for user, assistant in zip(user_stm, assistant_stm):
+            messages.extend([
+                {"role": "user", "name": USER, "content": user["memory"]},
+                {"role": "assistant", "content": assistant["memory"]}
+            ])
+
+        messages.append({
+            "role": "user",
+            "name": source,
+            "content": content
+        })
+
         result = None
         try:
             while True:
@@ -261,7 +256,7 @@ def llm_worker():
 
                 messages.append({
                     "role": "assistant",
-                    "content": None,
+                    "content": result.get("full_content"),
                     "tool_calls": [
                         {
                             "id": tc["id"],

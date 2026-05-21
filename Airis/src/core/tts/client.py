@@ -150,7 +150,6 @@ class TTSClient:
         self._maybe_send_sentence_end()
         self.synthesis_idle.set()
         cancellation_details = evt.result.cancellation_details
-        self.logger.warning(f"Synthesis canceled: {cancellation_details.reason}")
         if cancellation_details.reason == speechsdk.CancellationReason.Error:
             self.logger.error(f"Error details: {cancellation_details.error_details}")
 

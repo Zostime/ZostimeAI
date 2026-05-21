@@ -56,10 +56,6 @@ class EventBus:
 
             for handler in handlers:
                 try:
-                    threading.Thread(
-                        target=handler,
-                        args=(event,),
-                        daemon=True
-                    ).start()
+                    handler(event)
                 except Exception as e:
                     runtime.LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
