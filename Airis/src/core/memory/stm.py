@@ -17,8 +17,6 @@ class STMClient:
         # 存储结构：user_id -> deque，每个元素为 {"content": str, "timestamp": datetime}
         self.memory = defaultdict(lambda: deque(maxlen=self.limit))
 
-        self.logger.info(f"STM初始化,limit={self.limit},path={self.path}")
-
     def add_memory(self, content, user_id):
         """
         添加一条记忆（附带时间戳）。

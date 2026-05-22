@@ -244,6 +244,7 @@ def llm_worker():
                         TTS.stream_feed(buf)
                         if not ephemeral_context:
                             MEMORY.add_memory(result['full_content'], user_id="Airis")
+                            MEMORY.add_memory(content, user_id=source)
                         break
 
                 if INTERRUPT.is_interrupted():
@@ -314,11 +315,7 @@ def llm_worker():
                 if INTERRUPT.is_interrupted():
                     break
 
-            if not ephemeral_context:
-                MEMORY.add_memory(content, user_id=source)
-
         except Exception as e:
-            print(f"Someone tell {USER} there is a problem with my AI.", flush=True)
             TTS.stream_feed(f"Someone tell {USER} there is a problem with my AI.")
             runtime.LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:

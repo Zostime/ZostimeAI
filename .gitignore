@@ -13,7 +13,6 @@ Airis/data/models/*
 
 # services
 services/*
-!services/painter/client.py
 !services/sound_board
 !services/calculator
 

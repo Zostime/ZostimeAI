@@ -1,4 +1,4 @@
-from Airis.core.common.config import ConfigManager
+from Airis.src.core.common.config import ConfigManager
 from datetime import datetime
 import zipfile
 import os
