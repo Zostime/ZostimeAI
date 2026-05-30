@@ -4,6 +4,12 @@
 **/__pycache__/
 *.egg-info/
 
+# .env
+.env
+
+# example
+!*.example
+
 # LLM本地服务器
 Airis/src/core/llm/server.py
 Airis/src/core/llm/models
@@ -15,10 +21,6 @@ Airis/data/models/*
 services/*
 !services/sound_board
 !services/calculator
-
-# .env
-Airis/data/config/.env
-!Airis/data/config/.env.example
 
 # memory
 Airis/data/memories/*

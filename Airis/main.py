@@ -39,7 +39,7 @@ class EventHandlers:
 
         llm_queue.put({
             "source": data['source'],
-            "content": runtime.STATE.env.input['content'],
+            "content": data['content'],
             "ephemeral_context": data['ephemeral_context']
         })
 
@@ -72,11 +72,37 @@ class InterruptManager:
             if ENABLE_STT:
                 STT.detect()
                 self.trigger()
-                handle_user_input()
+                self.handle_user_input()
             else:
                 keyboard.wait("ctrl+f1")
                 self.trigger()
-                handle_user_input()
+                self.handle_user_input()
+
+    @staticmethod
+    def handle_user_input():
+        runtime.STATE.env.is_speaking = True
+        print()
+        if ENABLE_STT:
+            while True:
+                user_input = STT.listen_and_transcribe()
+                if user_input is not None:
+                    print(f"\r{USER}:{user_input}")
+                    break
+                else:
+                    print("\r未识别到音频", end='')
+                    time.sleep(1)
+        else:
+            user_input = input(f"{USER}:")
+
+        runtime.EVENT_BUS.emit(
+            event_type="input",
+            data={
+                "source": USER,
+                "content": user_input,
+                "ephemeral_context": False,
+            },
+            priority="high"
+        )
 
 def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
@@ -112,31 +138,6 @@ def build_memory_context(user_input) -> str:
         return "没有相关记忆"
 
     return "\n".join(parts)
-
-def handle_user_input():
-    runtime.STATE.env.is_speaking = True
-    print()
-    if ENABLE_STT:
-        while True:
-            user_input = STT.listen_and_transcribe()
-            if user_input is not None:
-                print(f"\r{USER}:{user_input}")
-                break
-            else:
-                print("\r未识别到音频", end='')
-                time.sleep(1)
-    else:
-        user_input = input(f"{USER}:")
-
-    runtime.EVENT_BUS.emit(
-        event_type="input",
-        data={
-            "source": USER,
-            "content": user_input,
-            "ephemeral_context": False,
-        },
-        priority="high"
-    )
 
 def llm_worker():
     while True:
