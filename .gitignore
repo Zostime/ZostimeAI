@@ -38,3 +38,4 @@ Airis/data/backups/*
 **/node_modules
 
 **/test.py
+**/*_wip.*

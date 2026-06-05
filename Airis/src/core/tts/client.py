@@ -1,7 +1,8 @@
-import queue
-import threading
 import azure.cognitiveservices.speech as speechsdk # noqa
-import pyaudio
+import sounddevice as sd
+import numpy as np
+import threading
+import queue
 
 from ..common.config import ConfigManager
 from ..common.logger import LogManager
@@ -70,14 +71,12 @@ class TTSClient:
         self.synthesizer.synthesis_completed.connect(self._on_synthesis_completed)
         self.synthesizer.synthesis_canceled.connect(self._on_synthesis_canceled)
 
-        self.p = pyaudio.PyAudio()
-        self.player = self.p.open(
-            format=pyaudio.paInt16,
+        self.player = sd.OutputStream(
+            samplerate=24000,
             channels=1,
-            rate=24000,
-            output=True,
-            frames_per_buffer=4096
+            dtype='int16'
         )
+        self.player.start()
 
     def _on_word_boundary(self, evt):
         self.boundary_queue.put_nowait(evt)
@@ -178,7 +177,7 @@ class TTSClient:
                 continue
 
             try:
-                self.player.write(data)
+                self.player.write(np.frombuffer(data, dtype=np.int16))
                 frames = len(data) // 2
                 with self.played_frames_lock:
                     self.played_frames += frames
@@ -265,13 +264,11 @@ class TTSClient:
             except Exception as e:
                 self.logger.error(f"Error closing audio stream: {e}")
             try:
-                self.player = self.p.open(
-                    format=pyaudio.paInt16,
+                self.player = sd.OutputStream(
+                    samplerate=24000,
                     channels=1,
-                    rate=24000,
-                    output=True,
-                    frames_per_buffer=4096
-                )
+                    dtype='int16'
+                ).start()
             except Exception as e:
                 self.logger.error(f"Error reopening audio stream: {e}")
 

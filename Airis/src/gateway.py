@@ -32,6 +32,7 @@ class WebSocketServer:
         path = websocket.path.lstrip("/")
         client_id = id(websocket)
         self.clients[path][client_id] = websocket
+        runtime.LOGGER.logger.debug(f"[websocket] New connection {client_id} -> {path}")
 
         try:
             if path in self.handlers:

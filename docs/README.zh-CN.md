@@ -50,8 +50,8 @@ ZostimeAI/
 │   │   ├─config/          
 │   │   ├─logs/           
 │   │   ├─memories/            
-│   │   │   ├─short_term       
-│   │   │   └─long_term   
+│   │   │   ├─note/       
+│   │   │   └─long_term/   
 │   │   └─backups/
 │   ├─scripts/                      # 脚本
 │   │   ├─system/    
@@ -72,8 +72,7 @@ ZostimeAI/
 │   │   └─pyproject.toml   
 │   └─typescript/                   # Typescript包
 │       ├─src/
-│       │   ├─index.ts
-│       │   └─websocket.ts
+│       │   └─index.ts
 │       ├─dist/
 │       ├─package.json
 │       └─tsconfig.json 
