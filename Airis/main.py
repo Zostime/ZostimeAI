@@ -230,7 +230,7 @@ def llm_worker():
                         buf += chunk
 
                         if any(_ in buf for _ in chars):
-                            TTS.stream_feed(buf)
+                            TTS.feed(buf)
                             buf = ""
 
                         ProtocolRouter.Runtime.emit(
@@ -242,7 +242,7 @@ def llm_worker():
 
                     except StopIteration as e:
                         result = e.value
-                        TTS.stream_feed(buf)
+                        TTS.feed(buf)
                         if not ephemeral_context:
                             MEMORY.add_memory(result['full_content'], user_id="Airis")
                             MEMORY.add_memory(content, user_id=source)
@@ -317,7 +317,7 @@ def llm_worker():
                     break
 
         except Exception as e:
-            TTS.stream_feed(f"Someone tell {USER} there is a problem with my AI.")
+            TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
             runtime.LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
         finally:
             runtime.STATE.env.is_speaking = False

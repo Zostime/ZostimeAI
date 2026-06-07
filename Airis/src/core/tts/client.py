@@ -46,10 +46,9 @@ class TTSClient:
         self.stop_requested = False
         self.interrupt_audio = threading.Event()
 
-        self._init()
-        self._start_threads()
-
         self._text_cache = ""
+
+        self._init()
 
     def _init(self):
         speech_config = speechsdk.SpeechConfig(
@@ -78,16 +77,15 @@ class TTSClient:
         )
         self.player.start()
 
-    def _on_word_boundary(self, evt):
-        self.boundary_queue.put_nowait(evt)
-
-    def _start_threads(self):
         self.player_thread = threading.Thread(target=self._player_worker, daemon=True)
         self.synth_thread = threading.Thread(target=self._synth_worker, daemon=True)
         self.subtitle_thread = threading.Thread(target=self._subtitle_worker, daemon=True)
         self.player_thread.start()
         self.synth_thread.start()
         self.subtitle_thread.start()
+
+    def _on_word_boundary(self, evt):
+        self.boundary_queue.put_nowait(evt)
 
     def _subtitle_worker(self):
         while self.running: # noqa
@@ -135,18 +133,18 @@ class TTSClient:
         except Exception as e:
             self.logger.error(f"Error in synthesizing callback: {e}")
 
-    def _maybe_send_sentence_end(self):
+    def _send_sentence_end(self):
         with self._sentence_end_lock:
             if not self._sentence_end_sent:
                 self._sentence_end_sent = True
                 self.boundary_queue.put(self.SENTENCE_END)
 
     def _on_synthesis_completed(self, evt): # noqa
-        self._maybe_send_sentence_end()
+        self._send_sentence_end()
         self.synthesis_idle.set()
 
     def _on_synthesis_canceled(self, evt):
-        self._maybe_send_sentence_end()
+        self._send_sentence_end()
         self.synthesis_idle.set()
         cancellation_details = evt.result.cancellation_details
         if cancellation_details.reason == speechsdk.CancellationReason.Error:
@@ -225,10 +223,10 @@ class TTSClient:
                 self.synthesizer.speak_ssml_async(ssml_string)
             except Exception as e:
                 self.logger.error(f"Synthesis start error: {e}")
-                self._maybe_send_sentence_end()
+                self._send_sentence_end()
                 self.synthesis_idle.set()
 
-    def stream_feed(self, text: str) -> None:
+    def feed(self, text: str) -> None:
         if not self.running:
             return
         self._text_cache += text
@@ -243,11 +241,8 @@ class TTSClient:
         except Exception as e:
             self.logger.error(f"Error stopping synthesis: {e}")
 
-        if self.player and self.player.is_active():
-            try:
-                self.player.stop_stream()
-            except Exception as e:
-                self.logger.error(f"Error stopping audio stream: {e}")
+        if self.player and self.player.active:
+            self.player.abort()
 
         self._drain_queue(self.audio_queue)
         self._drain_queue(self.text_queue)
@@ -260,15 +255,7 @@ class TTSClient:
 
         if self.player:
             try:
-                self.player.close()
-            except Exception as e:
-                self.logger.error(f"Error closing audio stream: {e}")
-            try:
-                self.player = sd.OutputStream(
-                    samplerate=24000,
-                    channels=1,
-                    dtype='int16'
-                ).start()
+                self.player.start()
             except Exception as e:
                 self.logger.error(f"Error reopening audio stream: {e}")
 
@@ -286,6 +273,7 @@ class TTSClient:
 
     def close(self):
         self.running = False
+        self._text_cache = ""
         self.text_queue.put(None)
         self.audio_queue.put(None)
         self.boundary_queue.put(None)
@@ -299,9 +287,5 @@ class TTSClient:
             self.subtitle_thread.join(timeout=2.0)
 
         if self.player:
-            self.player.stop_stream()
+            self.player.stop()
             self.player.close()
-        if self.p:
-            self.p.terminate()
-
-        self._text_cache = ""
