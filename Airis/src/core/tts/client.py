@@ -38,7 +38,7 @@ class TTSClient:
         self._sentence_end_lock = threading.Lock()
 
         self.p = None
-        self.player = None
+        self.player: sd.OutputStream = None
         self.synthesizer = None
 
         self.synthesis_idle = threading.Event()
@@ -190,19 +190,18 @@ class TTSClient:
     def _synth_worker(self):
         while self.running: # noqa
             try:
-                text = self.text_queue.get(timeout=0.5)
+                text = self.text_queue.get()
             except queue.Empty:
                 continue
             if text is None:
                 break
             if not text.strip():
                 continue
-
             while self.running and not self.stop_requested:
                 if self.synthesis_idle.wait(timeout=0.1):
                     break
             if self.stop_requested or not self.running:
-                break
+                continue
             self.synthesis_idle.clear()
 
             self.audio_queue.put(self.sentence_start_marker)
@@ -242,7 +241,10 @@ class TTSClient:
             self.logger.error(f"Error stopping synthesis: {e}")
 
         if self.player and self.player.active:
-            self.player.abort()
+            try:
+                self.player.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping audio stream: {e}")
 
         self._drain_queue(self.audio_queue)
         self._drain_queue(self.text_queue)
@@ -254,6 +256,10 @@ class TTSClient:
             self._sentence_end_sent = False
 
         if self.player:
+            try:
+                self.player.abort()
+            except Exception as e:
+                self.logger.error(f"Error closing audio stream: {e}")
             try:
                 self.player.start()
             except Exception as e:
