@@ -3,6 +3,7 @@ import sounddevice as sd
 import numpy as np
 import threading
 import queue
+import re
 
 from ..common.config import ConfigManager
 from ..common.logger import LogManager
@@ -47,6 +48,8 @@ class TTSClient:
         self.interrupt_audio = threading.Event()
 
         self._text_cache = ""
+        self.player_idle = threading.Event()
+        self.player_idle.set()
 
         self._init()
 
@@ -123,6 +126,19 @@ class TTSClient:
                             subtitle_chunk = self._text_cache[:index + len(text)]
                             self._text_cache = self._text_cache[index + len(text):]
                             self.subtitle_queue.put(subtitle_chunk)
+
+                            # 检测 finished 进来的 '\0' 字符来判断是否 set self.player_idle
+                            # 这种方案应该不是最好的, 特别是使用 re 来过滤不发音字符
+                            filtered_text_cache = re.sub(
+                                pattern=r'\s',
+                                repl='',
+                                string=self._text_cache
+                            )
+                            if filtered_text_cache[:1] == '\0':
+                                self.player_idle.set()
+                                filtered_index = self._text_cache.find('\0')
+                                if filtered_index != -1:
+                                    self._text_cache = self._text_cache[filtered_index + 1:]
                         break
 
     def _on_synthesizing(self, evt):
@@ -175,6 +191,7 @@ class TTSClient:
                 continue
 
             try:
+                self.player_idle.clear()
                 self.player.write(np.frombuffer(data, dtype=np.int16))
                 frames = len(data) // 2
                 with self.played_frames_lock:
@@ -231,9 +248,15 @@ class TTSClient:
         self._text_cache += text
         self.text_queue.put(text)
 
+    def finished(self):
+        if not self.running:
+            return
+        self._text_cache += '\0'
+
     def interrupt(self):
         self.stop_requested = True
         self._text_cache = ""
+        self.player_idle.set()
         self.interrupt_audio.set()
         try:
             self.synthesizer.stop_speaking_async().get()

@@ -322,6 +322,8 @@ def llm_worker():
         finally:
             runtime.STATE.env.is_speaking = False
             runtime.STATE.agent.unread_events.clear()  # 清空未读消息
+            # TTS.finished()  # 告知 TTS 当前会话结束
+            # TTS.player_idle.wait()  # 等待 TTS 播报完毕再开启下一个 Task
 
 def tts_worker():
     while True:
