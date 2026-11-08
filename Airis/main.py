@@ -31,7 +31,7 @@ def write_stt_status(message: str, end: str = '') -> None:
 def emit_tts_state(state: str) -> None:
     ProtocolRouter.Runtime.emit(
         event=f"tts/{state}",
-        data={"state": state}
+        data={}
     )
 
 class EventHandlers:
@@ -218,36 +218,46 @@ def collect_tools():
     return tools, tool_map, tool_choice
 
 def stream_llm_response(messages, tools, tool_choice, task):
-    generator = LLM.chat_stream(
-        messages=messages,
-        tools=tools if ENABLE_TOOLS else None,
-        tool_choice=tool_choice
+    ProtocolRouter.Runtime.emit(
+        event="llm/stream_start",
+        data={"source": task["source"]}
     )
-    buffer = ""
-    sentence_endings = (".", "。", "!", "！", "?", "？", "\n")
+    try:
+        generator = LLM.chat_stream(
+            messages=messages,
+            tools=tools if ENABLE_TOOLS else None,
+            tool_choice=tool_choice
+        )
+        buffer = ""
+        sentence_endings = (".", "。", "!", "！", "?", "？", "\n")
 
-    while True:
-        if INTERRUPT.is_interrupted():
-            generator.close()
-            return None
+        while True:
+            if INTERRUPT.is_interrupted():
+                generator.close()
+                return None
 
-        try:
-            chunk = next(generator)
-        except StopIteration as stop:
-            result = stop.value
-            TTS.feed(buffer)
-            if not task["ephemeral_context"]:
-                MEMORY.add_memory(result["full_content"], user_id="Airis")
-                MEMORY.add_memory(task["content"], user_id=task["source"])
-            return result
+            try:
+                chunk = next(generator)
+            except StopIteration as stop:
+                result = stop.value
+                TTS.feed(buffer)
+                if not task["ephemeral_context"]:
+                    MEMORY.add_memory(result["full_content"], user_id="Airis")
+                    MEMORY.add_memory(task["content"], user_id=task["source"])
+                return result
 
-        buffer += chunk
-        if any(ending in buffer for ending in sentence_endings):
-            TTS.feed(buffer)
-            buffer = ""
+            buffer += chunk
+            if any(ending in buffer for ending in sentence_endings):
+                TTS.feed(buffer)
+                buffer = ""
 
+            ProtocolRouter.Runtime.emit(
+                event="llm/stream", data={"chunk": chunk}
+            )
+    finally:
         ProtocolRouter.Runtime.emit(
-            event="llm/stream", data={"chunk": chunk}
+            event="llm/stream_end",
+            data={"source": task["source"]}
         )
 
 def append_assistant_tool_message(messages, result, tool_calls):
