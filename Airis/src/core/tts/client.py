@@ -4,6 +4,7 @@ import numpy as np
 import threading
 import queue
 import re
+from typing import Callable, Optional
 
 from ..common.config import ConfigManager
 from ..common.logger import LogManager
@@ -11,7 +12,8 @@ from ..common.logger import LogManager
 class TTSClient:
     SENTENCE_END = object()
 
-    def __init__(self):
+    def __init__(self, state_callback: Optional[Callable[[str], None]] = None):
+        self.state_callback = state_callback
         self.config = ConfigManager()
         self.logger = LogManager("tts").get_logger()
 
@@ -27,12 +29,17 @@ class TTSClient:
         self.running = True
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()
+        self.finish_marker = object()
+        self.playback_end_marker = object()
+        self._has_pending_text = False
         self.boundary_queue = queue.Queue()
         self.subtitle_queue = queue.Queue()
         self.base_frame_queue = queue.Queue()
 
         self.played_frames = 0
         self.played_frames_lock = threading.Lock()
+        self._playback_state_lock = threading.Lock()
+        self._is_playing = False
         self.sentence_start_marker = object()
 
         self._sentence_end_sent = False
@@ -127,15 +134,13 @@ class TTSClient:
                             self._text_cache = self._text_cache[index + len(text):]
                             self.subtitle_queue.put(subtitle_chunk)
 
-                            # 检测 finished 进来的 '\0' 字符来判断是否 set self.player_idle
-                            # 这种方案应该不是最好的, 特别是使用 re 来过滤不发音字符
+                            # Drop the end-of-turn marker after the final spoken word.
                             filtered_text_cache = re.sub(
                                 pattern=r'\s',
                                 repl='',
                                 string=self._text_cache
                             )
                             if filtered_text_cache[:1] == '\0':
-                                self.player_idle.set()
                                 filtered_index = self._text_cache.find('\0')
                                 if filtered_index != -1:
                                     self._text_cache = self._text_cache[filtered_index + 1:]
@@ -154,6 +159,28 @@ class TTSClient:
             if not self._sentence_end_sent:
                 self._sentence_end_sent = True
                 self.boundary_queue.put(self.SENTENCE_END)
+
+    def _emit_state(self, state: str) -> None:
+        if self.state_callback is not None:
+            try:
+                self.state_callback(state)
+            except Exception as error:
+                self.logger.error(f"TTS state callback error: {error}")
+
+    def _start_playback(self) -> None:
+        with self._playback_state_lock:
+            if self._is_playing:
+                return
+            self._is_playing = True
+        self._emit_state("start")
+
+    def _finish_playback(self, state: str) -> None:
+        with self._playback_state_lock:
+            was_playing = self._is_playing
+            self._is_playing = False
+        self.player_idle.set()
+        if was_playing:
+            self._emit_state(state)
 
     def _on_synthesis_completed(self, evt): # noqa
         self._send_sentence_end()
@@ -181,6 +208,10 @@ class TTSClient:
             if self.interrupt_audio.is_set():
                 continue
 
+            if data is self.playback_end_marker:
+                self._finish_playback("end")
+                continue
+
             if data is self.sentence_start_marker:
                 with self.played_frames_lock:
                     base_frame = self.played_frames
@@ -192,6 +223,7 @@ class TTSClient:
 
             try:
                 self.player_idle.clear()
+                self._start_playback()
                 self.player.write(np.frombuffer(data, dtype=np.int16))
                 frames = len(data) // 2
                 with self.played_frames_lock:
@@ -200,6 +232,7 @@ class TTSClient:
                 if not self.running:
                     break
                 self.logger.error(f"Audio write error: {e}")
+                self._finish_playback("end")
                 if self.interrupt_audio.is_set():
                     continue
                 break
@@ -212,6 +245,14 @@ class TTSClient:
                 continue
             if text is None:
                 break
+            if text is self.finish_marker:
+                while self.running and not self.stop_requested:
+                    if self.synthesis_idle.wait(timeout=0.1):
+                        break
+                if self.stop_requested or not self.running:
+                    continue
+                self.audio_queue.put(self.playback_end_marker)
+                continue
             if not text.strip():
                 continue
             while self.running and not self.stop_requested:
@@ -246,18 +287,35 @@ class TTSClient:
         if not self.running:
             return
         self._text_cache += text
+        self._has_pending_text = self._has_pending_text or bool(text.strip())
         self.text_queue.put(text)
 
     def finished(self):
         if not self.running:
             return
+        if not self._has_pending_text:
+            self.player_idle.set()
+            return
+        self._has_pending_text = False
         self._text_cache += '\0'
+        self.player_idle.clear()
+        self.text_queue.put(self.finish_marker)
 
     def interrupt(self):
+        was_active = (
+            self._has_pending_text
+            or not self.synthesis_idle.is_set()
+            or not self.player_idle.is_set()
+        )
         self.stop_requested = True
         self._text_cache = ""
+        self._has_pending_text = False
+        with self._playback_state_lock:
+            self._is_playing = False
         self.player_idle.set()
         self.interrupt_audio.set()
+        if was_active:
+            self._emit_state("interrupt")
         try:
             self.synthesizer.stop_speaking_async().get()
         except Exception as e:

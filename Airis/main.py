@@ -21,12 +21,18 @@ from src.output import OutputManager
 
 # 配置
 USER = "Zostime"
-ENABLE_STT = True
+ENABLE_STT = False
 ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
 
 def write_stt_status(message: str, end: str = '') -> None:
     message = message.lstrip("\r")
     OUTPUT.write("stdout", f"\r\x1b[2K{message}", end=end)
+
+def emit_tts_state(state: str) -> None:
+    ProtocolRouter.Runtime.emit(
+        event=f"tts/{state}",
+        data={"state": state}
+    )
 
 class EventHandlers:
     @staticmethod
@@ -145,191 +151,197 @@ def build_memory_context(user_input) -> str:
 
     return "\n".join(parts)
 
+def build_conversation_messages(task):
+    system_prompt = PROMPT.build({
+        "system.md": {},
+        "personality.md": {},
+        "memory.md": {
+            "memory": runtime.STATE.agent.memory,
+        },
+        "runtime_state.md": {
+            "current_time": datetime.datetime.now(),
+            "unread_events": runtime.STATE.agent.unread_events,
+        }
+    })
+
+    messages = [{"role": "system", "content": system_prompt}]
+    user_stm = MEMORY.search_stm(USER)
+    assistant_stm = MEMORY.search_stm("Airis")
+    user_stm = sorted(user_stm, key=lambda item: item.get("timestamp", 0))
+    assistant_stm = sorted(
+        assistant_stm,
+        key=lambda item: item.get("timestamp", 0)
+    )
+
+    for user_entry, assistant_entry in zip(user_stm, assistant_stm):
+        messages.extend([
+            {
+                "role": "user",
+                "name": USER,
+                "content": user_entry["memory"]
+            },
+            {"role": "assistant", "content": assistant_entry["memory"]}
+        ])
+
+    messages.append({
+        "role": "user",
+        "name": task["source"],
+        "content": task["content"]
+    })
+    return messages
+
+def collect_tools():
+    tools = []
+    tool_map = {}
+    forced_tools = []
+
+    for session in ProtocolRouter.Game.sessions.values():
+        for action in session.registered_actions.values():
+            safe_name = f"{session.client_id}_{action['name']}"
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": safe_name,
+                    "description": action["description"],
+                    "parameters": action.get("schema") or {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            })
+            tool_map[safe_name] = (session, action["name"])
+
+        for name in session.forced_action_names:
+            forced_tools.append(f"{session.client_id}_{name}")
+
+    tool_choice = "required" if forced_tools else "auto"
+    return tools, tool_map, tool_choice
+
+def stream_llm_response(messages, tools, tool_choice, task):
+    generator = LLM.chat_stream(
+        messages=messages,
+        tools=tools if ENABLE_TOOLS else None,
+        tool_choice=tool_choice
+    )
+    buffer = ""
+    sentence_endings = (".", "。", "!", "！", "?", "？", "\n")
+
+    while True:
+        if INTERRUPT.is_interrupted():
+            generator.close()
+            return None
+
+        try:
+            chunk = next(generator)
+        except StopIteration as stop:
+            result = stop.value
+            TTS.feed(buffer)
+            if not task["ephemeral_context"]:
+                MEMORY.add_memory(result["full_content"], user_id="Airis")
+                MEMORY.add_memory(task["content"], user_id=task["source"])
+            return result
+
+        buffer += chunk
+        if any(ending in buffer for ending in sentence_endings):
+            TTS.feed(buffer)
+            buffer = ""
+
+        ProtocolRouter.Runtime.emit(
+            event="llm/stream", data={"chunk": chunk}
+        )
+
+def append_assistant_tool_message(messages, result, tool_calls):
+    messages.append({
+        "role": "assistant",
+        "content": result.get("full_content"),
+        "tool_calls": [
+            {
+                "id": tool_call["id"],
+                "type": "function",
+                "function": {
+                    "name": tool_call["name"],
+                    "arguments": json.dumps(tool_call["arguments"])
+                }
+            }
+            for tool_call in tool_calls
+        ]
+    })
+
+def execute_tool_calls(tool_calls, tool_map, messages):
+    for tool_call in tool_calls:
+        if INTERRUPT.is_interrupted():
+            break
+
+        try:
+            session, real_name = tool_map[tool_call["name"]]
+            result = ProtocolRouter.Game.run_action(
+                session=session,
+                data={
+                    "command": "action",
+                    "data": {
+                        "id": tool_call["id"],
+                        "name": real_name,
+                        "data": json.dumps(tool_call.get("arguments", {}))
+                    }
+                }
+            )
+
+            if result.get("success"):
+                session.forced_action_names.clear()
+                session.force_payload = None
+            output = result.get("message", "")
+        except Exception as error:
+            output = f"工具执行失败: {error}"
+
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call["id"],
+            "content": str(output)
+        })
+        ProtocolRouter.Runtime.emit(
+            event="llm/tool_call",
+            data={"name": tool_call["name"]}
+        )
+
+def process_llm_task(task):
+    messages = build_conversation_messages(task)
+
+    try:
+        while True:
+            tools, tool_map, tool_choice = collect_tools()
+            result = stream_llm_response(messages, tools, tool_choice, task)
+            if result is None or INTERRUPT.is_interrupted():
+                break
+
+            tool_calls = result.get("tool_calls") or []
+            if not tool_calls:
+                break
+
+            append_assistant_tool_message(messages, result, tool_calls)
+            execute_tool_calls(tool_calls, tool_map, messages)
+
+            if INTERRUPT.is_interrupted():
+                break
+
+            TTS.finished()
+            TTS.player_idle.wait()
+    except Exception as error:
+        TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
+        runtime.LOGGER.logger.error(
+            f"处理 LLM 请求时发生未知错误: {error}", exc_info=True
+        )
+    finally:
+        runtime.STATE.env.is_speaking = False
+        runtime.STATE.agent.unread_events.clear()
+        TTS.finished()
+        TTS.player_idle.wait()
+
 def llm_worker():
     while True:
         task = llm_queue.get()
         if task is None:
             break
-
-        source = task["source"]
-        content = task["content"]
-        ephemeral_context = task["ephemeral_context"]
-
-        system_prompt = PROMPT.build({
-            "system.md": {},
-            "personality.md": {},
-            "memory.md": {
-                "memory": runtime.STATE.agent.memory,
-            },
-            "runtime_state.md": {
-                "current_time": datetime.datetime.now(),
-                "unread_events": runtime.STATE.agent.unread_events,
-            }
-        })
-
-        messages = [{"role": "system", "content": system_prompt}] # 预备 messages
-
-        # STM排序(最新在前)
-        user_stm = MEMORY.search_stm(USER)  # [{"memory": str, "timestamp": datetime}, ...]
-        assistant_stm = MEMORY.search_stm('Airis')
-        user_stm = sorted(user_stm, key=lambda x: x.get("timestamp", 0))
-        assistant_stm = sorted(assistant_stm, key=lambda x: x.get("timestamp", 0))
-        for user, assistant in zip(user_stm, assistant_stm):
-            messages.extend([
-                {"role": "user", "name": USER, "content": user["memory"]},
-                {"role": "assistant", "content": assistant["memory"]}
-            ])
-
-        messages.append({
-            "role": "user",
-            "name": source,
-            "content": content
-        })
-
-        result = None
-        try:
-            while True:
-                tools = []
-                tool_map = {}
-                tool_choice = "auto"
-                forced_tools = []
-
-                for session in ProtocolRouter.Game.sessions.values():
-                    for action in session.registered_actions.values():
-                        safe_name = f"{session.client_id}_{action['name']}"
-
-                        tools.append({
-                            "type": "function",
-                            "function": {
-                                "name": safe_name,
-                                "description": action["description"],
-                                "parameters": action.get("schema") or {
-                                    "type": "object",
-                                    "properties": {}
-                                }
-                            }
-                        })
-
-                        tool_map[safe_name] = (session, action["name"])
-
-                    for name in session.forced_action_names:
-                        safe_name = f"{session.client_id}_{name}"
-                        forced_tools.append(safe_name)
-
-                if forced_tools:
-                    tool_choice = "required"
-
-                gen = LLM.chat_stream(
-                    messages=messages,
-                    tools=tools if ENABLE_TOOLS else None,
-                    tool_choice=tool_choice
-                )
-                buf = ""
-                chars = ['.', '。', '!', '！', '?', '？', '\n']
-                while True:
-                    try:
-                        if INTERRUPT.is_interrupted():
-                            gen.close()
-                            break
-
-                        chunk = next(gen)
-                        buf += chunk
-
-                        if any(_ in buf for _ in chars):
-                            TTS.feed(buf)
-                            buf = ""
-
-                        ProtocolRouter.Runtime.emit(
-                            event="llm/stream",
-                            data={
-                                "chunk": chunk
-                            }
-                        )
-
-                    except StopIteration as e:
-                        result = e.value
-                        TTS.feed(buf)
-                        if not ephemeral_context:
-                            MEMORY.add_memory(result['full_content'], user_id="Airis")
-                            MEMORY.add_memory(content, user_id=source)
-                        break
-
-                if INTERRUPT.is_interrupted():
-                    break
-
-                tool_calls = result.get("tool_calls") or []
-
-                if len(tool_calls) == 0:
-                    break
-
-                messages.append({
-                    "role": "assistant",
-                    "content": result.get("full_content"),
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"])
-                            }
-                        }
-                        for tc in tool_calls
-                    ]
-                })
-
-                for tool_call in tool_calls:
-                    if INTERRUPT.is_interrupted():
-                        break
-                    try:
-                        session, real_name = tool_map[tool_call["name"]]
-
-                        result = ProtocolRouter.Game.run_action(
-                            session=session,
-                            data={
-                                "command": "action",
-                                "data": {
-                                    "id": tool_call["id"],
-                                    "name": real_name,
-                                    "data": json.dumps(tool_call.get("arguments", {}))
-                                }
-                            }
-                        )
-
-                        if result.get("success"):
-                            session.forced_action_names.clear()
-                            session.force_payload = None
-                        else:
-                            pass
-                        output = result.get("message", "")
-
-                    except Exception as e:
-                        output = f"工具执行失败: {e}"
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call["id"],
-                        "content": str(output)
-                    })
-
-                    ProtocolRouter.Runtime.emit(
-                        event="llm/tool_call",
-                        data={
-                            "name": tool_call["name"]
-                        }
-                    )
-
-                if INTERRUPT.is_interrupted():
-                    break
-
-        except Exception as e:
-            TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
-            runtime.LOGGER.logger.error(f"处理 LLM 请求时发生未知错误: {e}", exc_info=True)
-        finally:
-            runtime.STATE.env.is_speaking = False
-            runtime.STATE.agent.unread_events.clear()  # 清空未读消息
-            TTS.finished()  # 告知 TTS 当前会话结束
-            TTS.player_idle.wait()  # 等待 TTS 播报完毕再开启下一个 Task
+        process_llm_task(task)
 
 def tts_worker():
     while True:
@@ -347,7 +359,7 @@ if __name__ == '__main__':
         OUTPUT.register("stdout", enabled=True)
 
         LLM = LLMClient()
-        TTS = TTSClient()
+        TTS = TTSClient(state_callback=emit_tts_state)
         STT = STTClient(
             status_callback=write_stt_status
         )
