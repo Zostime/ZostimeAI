@@ -17,11 +17,16 @@ import src.runtime as runtime
 from src.gateway import ProtocolRouter
 from src.event_bus import EventBus
 from src.state import State
+from src.output import OutputManager
 
 # 配置
 USER = "Zostime"
-ENABLE_STT = False
+ENABLE_STT = True
 ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
+
+def write_stt_status(message: str, end: str = '') -> None:
+    message = message.lstrip("\r")
+    OUTPUT.write("stdout", f"\r\x1b[2K{message}", end=end)
 
 class EventHandlers:
     @staticmethod
@@ -81,15 +86,16 @@ class InterruptManager:
     @staticmethod
     def handle_user_input():
         runtime.STATE.env.is_speaking = True
-        print()
+        OUTPUT.write("stdout", "")
         if ENABLE_STT:
             while True:
+                write_stt_status("开始录音...")
                 user_input = STT.listen_and_transcribe()
                 if user_input is not None:
-                    print(f"\r{USER}:{user_input}")
+                    write_stt_status(f"{USER}:{user_input}", end='\n')
                     break
                 else:
-                    print("\r未识别到音频", end='')
+                    write_stt_status("未识别到音频")
                     time.sleep(1)
         else:
             user_input = input(f"{USER}:")
@@ -322,13 +328,13 @@ def llm_worker():
         finally:
             runtime.STATE.env.is_speaking = False
             runtime.STATE.agent.unread_events.clear()  # 清空未读消息
-            # TTS.finished()  # 告知 TTS 当前会话结束
-            # TTS.player_idle.wait()  # 等待 TTS 播报完毕再开启下一个 Task
+            TTS.finished()  # 告知 TTS 当前会话结束
+            TTS.player_idle.wait()  # 等待 TTS 播报完毕再开启下一个 Task
 
 def tts_worker():
     while True:
         word = TTS.subtitle_queue.get()
-        print(word, end='', flush=True)
+        OUTPUT.write("stdout", word, end='')
 
 if __name__ == '__main__':
     llm_queue = queue.Queue()
@@ -337,9 +343,14 @@ if __name__ == '__main__':
         runtime.CONFIG = ConfigManager()
         runtime.LOGGER = LogManager("system")
 
+        OUTPUT = OutputManager()
+        OUTPUT.register("stdout", enabled=True)
+
         LLM = LLMClient()
         TTS = TTSClient()
-        STT = STTClient()
+        STT = STTClient(
+            status_callback=write_stt_status
+        )
         MEMORY = MemoryManager()
         PROMPT = PromptBuilder()
 

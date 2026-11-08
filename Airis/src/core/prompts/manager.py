@@ -15,14 +15,15 @@ class PromptBuilder:
         parts = []
 
         for prompt in self.prompts_path:
+            prompt_path = self.config.base_dir / prompt
             try:
-                with open(prompt, "r", encoding="utf-8") as f:
+                with open(prompt_path, "r", encoding="utf-8") as f:
                     filename = os.path.splitext(os.path.basename(prompt))[0]
                     text = f.read()
                     text = text.format(**context[f"{filename}.md"])
                     parts.append(f"[{filename}]\n{text}")
             except FileNotFoundError:
-                raise FileNotFoundError(f"Prompt {prompt} not found")
+                raise FileNotFoundError(f"Prompt {prompt_path} not found")
 
             except KeyError as e:
                 raise KeyError(f"You need to pass in the variables {e} required by {prompt}")

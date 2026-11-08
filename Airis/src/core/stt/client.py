@@ -5,7 +5,7 @@ import wave
 import io
 import pyaudio
 import numpy as np
-from typing import Optional
+from typing import Callable, Optional
 
 from ..common.config import ConfigManager   #配置管理器
 from ..common.logger import LogManager      #日志管理器
@@ -14,7 +14,8 @@ from ..common.logger import LogManager      #日志管理器
 # STT客户端
 # ===============================
 class STTClient:
-    def __init__(self):
+    def __init__(self, status_callback: Optional[Callable[[str], None]] = None):
+        self.status_callback = status_callback
         self.config = ConfigManager()
         self.logger = LogManager("stt").get_logger()
 
@@ -53,6 +54,10 @@ class STTClient:
         except Exception as e:
             raise ValueError(f"whisper初始化错误:{e}")
         return model
+
+    def _write_status(self, message: str) -> None:
+        if self.status_callback is not None:
+            self.status_callback(message)
 
     def _is_silence(self, data: bytes) -> bool:
         """基于RMS能量的静音检测"""
@@ -93,8 +98,6 @@ class STTClient:
         if not self.stream or self.detect_chunk is None:
             raise RuntimeError("必须先调用 detect() 方法")
 
-        print("\r开始录音...",end='')
-
         #录音直到连续静音超时
         frames = [self.detect_chunk]
         silent_chunks = 0
@@ -114,7 +117,7 @@ class STTClient:
                 silent_chunks = 0
 
             if silent_chunks > silence_limit:
-                print(f"\r检测到{self.silence_timeout}秒静音,录音结束.",end='')
+                self._write_status(f"\r检测到{self.silence_timeout}秒静音,录音结束.")
                 break
 
         self.stream.stop_stream()
@@ -147,10 +150,10 @@ class STTClient:
         """
         audio = self._record_until_silence()
         if audio is None or len(audio) == 0:
-            print("\r未捕获到有效语音", end='')
+            self._write_status("\r未捕获到有效语音")
             return None
 
-        print("\r正在转写...",end='')
+        self._write_status("\r正在转写...")
         if self.local:
             result = self.model.transcribe(
                 audio=audio,
