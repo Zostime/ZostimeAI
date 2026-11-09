@@ -6,6 +6,7 @@ import websockets
 import threading
 import asyncio
 import json
+import time
 
 from . import runtime
 
@@ -102,12 +103,15 @@ class ProtocolRouter:
                 runtime.LOGGER.debug(f"[websocket] {client_id} -> {msg}")
 
         @staticmethod
-        def emit(event: str, data: dict[str, Any]):
+        def emit(event: str, data: dict[str, Any], meta: Optional[dict[str, Any]] = {}):
             ProtocolRouter.ws.publish(
                 path="runtime",
                 data={
                     "event": event,
-                    "data": data
+                    "data": data,
+                    "meta": {
+                        "timestamp": time.time()
+                    } | meta
                 }
             )
 

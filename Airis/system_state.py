@@ -8,10 +8,11 @@ async def system_states():
             states=json.loads(await ws.recv())
             event = states.get("event").split('/')
             data = states.get("data")
+            meta = states.get("meta")
 
-            event_handler(event, data)
+            event_handler(event, data, meta)
 
-def event_handler(event, data):
+def event_handler(event, data, meta):
     if event[0] == "llm":
         if event[1] == "stream":
             pass
