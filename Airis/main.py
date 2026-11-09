@@ -13,7 +13,6 @@ from src.core.tts.client import TTSClient
 from src.core.stt.client import STTClient
 from src.core.llm.client import LLMClient
 
-import src.runtime as runtime
 from src.gateway import ProtocolRouter
 from src.event_bus import EventBus
 from src.state import State
@@ -39,9 +38,9 @@ class EventHandlers:
     def input_handler(event):
         INTERRUPT.clear()
         data = event["data"]
-        runtime.STATE.agent.memory = build_memory_context(data['content'])
+        STATE.agent.memory = build_memory_context(data['content'])
 
-        runtime.STATE.env.input = {
+        STATE.env.input = {
             "content": data['content'],
             "source": data['source'],
             "ephemeral_context": data['ephemeral_context'],
@@ -66,7 +65,7 @@ class InterruptManager:
 
     def trigger(self):
         self.event.set()
-        runtime.EVENT_BUS.emit(
+        EVENT_BUS.emit(
             event_type="interrupt",
             data=None,
             priority="critical",
@@ -91,7 +90,7 @@ class InterruptManager:
 
     @staticmethod
     def handle_user_input():
-        runtime.STATE.env.is_speaking = True
+        STATE.env.is_speaking = True
         OUTPUT.write("stdout", "")
         if ENABLE_STT:
             while True:
@@ -106,7 +105,7 @@ class InterruptManager:
         else:
             user_input = input(f"{USER}:")
 
-        runtime.EVENT_BUS.emit(
+        EVENT_BUS.emit(
             event_type="input",
             data={
                 "source": USER,
@@ -156,11 +155,11 @@ def build_conversation_messages(task):
         "system.md": {},
         "personality.md": {},
         "memory.md": {
-            "memory": runtime.STATE.agent.memory,
+            "memory": STATE.agent.memory,
         },
         "runtime_state.md": {
             "current_time": datetime.datetime.now(),
-            "unread_events": runtime.STATE.agent.unread_events,
+            "unread_events": STATE.agent.unread_events,
         }
     })
 
@@ -337,12 +336,12 @@ def process_llm_task(task):
             TTS.player_idle.wait()
     except Exception as error:
         TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
-        runtime.LOGGER.logger.error(
+        LOGGER.logger.error(
             f"处理 LLM 请求时发生未知错误: {error}", exc_info=True
         )
     finally:
-        runtime.STATE.env.is_speaking = False
-        runtime.STATE.agent.unread_events.clear()
+        STATE.env.is_speaking = False
+        STATE.agent.unread_events.clear()
         TTS.finished()
         TTS.player_idle.wait()
 
@@ -362,8 +361,9 @@ if __name__ == '__main__':
     llm_queue = queue.Queue()
 
     try:
-        runtime.CONFIG = ConfigManager()
-        runtime.LOGGER = LogManager("system")
+        CONFIG = ConfigManager()
+        LOGGER = LogManager("system")
+        
 
         OUTPUT = OutputManager()
         OUTPUT.register("stdout", enabled=True)
@@ -376,18 +376,23 @@ if __name__ == '__main__':
         MEMORY = MemoryManager()
         PROMPT = PromptBuilder()
 
-        runtime.STATE = State()
-        runtime.EVENT_BUS = EventBus()
-        runtime.EVENT_BUS.on("input", EventHandlers.input_handler)
-        runtime.EVENT_BUS.on("interrupt", EventHandlers.interrupt_handler)
+        STATE = State()
+        EVENT_BUS = EventBus(LOGGER.logger)
+        EVENT_BUS.on("input", EventHandlers.input_handler)
+        EVENT_BUS.on("interrupt", EventHandlers.interrupt_handler)
 
         INTERRUPT = InterruptManager()
-        ProtocolRouter.setup()
+        ProtocolRouter.setup(
+            config=CONFIG,
+            logger=LOGGER.logger,
+            state=STATE,
+            event_bus=EVENT_BUS,
+        )
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
 
-        runtime.LOGGER.logger.info("初始化完成")
+        LOGGER.logger.info("初始化完成")
         threading.Event().wait()  # loop
 
     except KeyboardInterrupt:

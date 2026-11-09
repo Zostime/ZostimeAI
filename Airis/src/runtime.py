@@ -1,4 +1,0 @@
-CONFIG = None
-LOGGER = None
-STATE = None
-EVENT_BUS = None

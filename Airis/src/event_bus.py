@@ -3,8 +3,6 @@ import threading
 import queue
 import time
 
-from . import runtime
-
 class EventBus:
     PRIORITY_MAP = {
         "critical": 0,
@@ -13,7 +11,8 @@ class EventBus:
         "low": 3,
     }  # EVENT 优先级
 
-    def __init__(self):
+    def __init__(self, logger):
+        self.logger = logger
         self._event_queue = queue.PriorityQueue()
         threading.Thread(target=self._loop, daemon=True).start()
         self._handlers = {}
@@ -58,4 +57,4 @@ class EventBus:
                 try:
                     handler(event)
                 except Exception as e:
-                    runtime.LOGGER.logger.error(f"[Event Error] {event['type']} -> {e}")
+                    self.logger.error(f"[Event Error] {event['type']} -> {e}")

@@ -8,10 +8,10 @@ import asyncio
 import json
 import time
 
-from . import runtime
-
 class WebSocketServer:
-    def __init__(self):
+    def __init__(self, config, logger):
+        self.config = config
+        self.logger = logger
         self.clients = defaultdict(dict)
         self.queue = asyncio.Queue()
         self.handlers = {}
@@ -22,7 +22,7 @@ class WebSocketServer:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        ws_url = runtime.CONFIG.get_json("system.websocket_url")
+        ws_url = self.config.get_json("system.websocket_url")
         parsed = urlparse(ws_url)
         host = parsed.hostname
         port = parsed.port
@@ -33,13 +33,13 @@ class WebSocketServer:
         path = websocket.path.lstrip("/")
         client_id = id(websocket)
         self.clients[path][client_id] = websocket
-        runtime.LOGGER.logger.debug(f"[websocket] New connection {client_id} -> {path}")
+        self.logger.debug(f"[websocket] New connection {client_id} -> {path}")
 
         try:
             if path in self.handlers:
                 await self.handlers[path](websocket, client_id)
         except websockets.ConnectionClosed:
-            runtime.LOGGER.logger.debug(f"[websocket] {client_id} -> {path} connection closed.")
+            self.logger.debug(f"[websocket] {client_id} -> {path} connection closed.")
         except Exception:  # noqa
             pass
         finally:
@@ -80,13 +80,19 @@ class WebSocketServer:
 class ProtocolRouter:
     ws = None
     _initialized = False
+    logger = None
+    state = None
+    event_bus = None
 
     @classmethod
-    def setup(cls):
+    def setup(cls, *, config, logger, state, event_bus):
         if cls._initialized:
             return
 
-        cls.ws = WebSocketServer()
+        cls.logger = logger
+        cls.state = state
+        cls.event_bus = event_bus
+        cls.ws = WebSocketServer(config, logger)
 
         cls.ws.on("runtime", cls.Runtime.handle)
         cls.ws.on("game", cls.Game.handle)
@@ -100,7 +106,7 @@ class ProtocolRouter:
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int):  # noqa
             async for msg in websocket:
-                runtime.LOGGER.debug(f"[websocket] {client_id} -> {msg}")
+                ProtocolRouter.logger.debug(f"[websocket] {client_id} -> {msg}")
 
         @staticmethod
         def emit(event: str, data: dict[str, Any], meta: Optional[dict[str, Any]] = {}):
@@ -139,7 +145,7 @@ class ProtocolRouter:
                     try:
                         data = json.loads(raw_msg)
                     except json.JSONDecodeError:
-                        runtime.LOGGER.logger.warning(f"Invalid JSON: {raw_msg}")
+                        ProtocolRouter.logger.warning(f"Invalid JSON: {raw_msg}")
                         continue
                     await ProtocolRouter.Game._handle_message(session, data)
             except websockets.ConnectionClosed:
@@ -160,9 +166,9 @@ class ProtocolRouter:
                 message = data.get("message", "")
                 silent = data.get("silent", True)
                 if silent:
-                    runtime.STATE.agent.unread_events.append(f"来自{game}的msg:{message}")
+                    ProtocolRouter.state.agent.unread_events.append(f"来自{game}的msg:{message}")
                 else:
-                    runtime.STATE.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
+                    ProtocolRouter.state.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
 
             elif command == "actions/register":
                 for act in data.get("actions", []):
@@ -185,9 +191,9 @@ class ProtocolRouter:
                         "query": query,
                         "state": state
                     }
-                    runtime.STATE.agent.unread_events.append(f"来自{game}的[force]: {session.force_payload}")
+                    ProtocolRouter.state.agent.unread_events.append(f"来自{game}的[force]: {session.force_payload}")
 
-                runtime.EVENT_BUS.emit(
+                ProtocolRouter.event_bus.emit(
                     event_type="input",
                     data={
                         "source": game,
