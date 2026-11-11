@@ -2,7 +2,7 @@ class State:
     class Agent:
         def __init__(self):
             self.memory: str = "无相关记忆"
-            self.is_silent: bool = True
+            self.idle: bool = True
             self.unread_events: list = []
 
     class Env:

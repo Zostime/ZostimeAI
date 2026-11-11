@@ -196,6 +196,7 @@ class ProtocolRouter:
                 ProtocolRouter.event_bus.emit(
                     event_type="input",
                     data={
+                        "type": "force_action",
                         "source": game,
                         "content": query,
                         "ephemeral_context": ephemeral_context,

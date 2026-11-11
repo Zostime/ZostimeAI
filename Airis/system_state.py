@@ -31,4 +31,9 @@ def event_handler(event, data, meta):
         if event[1] == "start":
             print(f"TTS started: {data}")
 
+    if event[0] == "debug":
+        if event[1] == "info":
+            print(f"[DEBUG] info: {data}")
+
+
 asyncio.run(system_states())

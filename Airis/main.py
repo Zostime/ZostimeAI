@@ -41,13 +41,15 @@ class EventHandlers:
         STATE.agent.memory = build_memory_context(data['content'])
 
         STATE.env.input = {
-            "content": data['content'],
+            "type": data['type'],
             "source": data['source'],
+            "content": data['content'],
             "ephemeral_context": data['ephemeral_context'],
             "timestamp": time.time()
         }
 
         llm_queue.put({
+            "type": data['type'],
             "source": data['source'],
             "content": data['content'],
             "ephemeral_context": data['ephemeral_context']
@@ -108,12 +110,60 @@ class InterruptManager:
         EVENT_BUS.emit(
             event_type="input",
             data={
+                "type": "user_input",
                 "source": USER,
                 "content": user_input,
                 "ephemeral_context": False,
             },
             priority="high"
         )
+
+class Agent:
+    def __init__(self):
+        self.pending_inputs = queue.Queue()
+        self.last_env = {
+            "pending_inputs": list(self.pending_inputs.queue),
+            "idle": STATE.agent.idle,
+            "unread_events": STATE.agent.unread_events.copy()
+        }
+        
+        threading.Thread(target=self.attention, daemon=True).start()
+
+    def attention(self):
+        """积累 env 数据, Main LLM 处于空闲时 由 Attention LLM 判断是否触发 Main LLM"""
+        while True:
+            # TODO: 延迟大, 不知何原因
+            idle = STATE.agent.idle
+            env = {
+                "pending_inputs": list(self.pending_inputs.queue),
+                "idle": idle,
+                "unread_events": STATE.agent.unread_events.copy()
+            }
+
+            env_changed = (env != self.last_env)
+            self.last_env = env
+            if idle and env_changed:
+                ProtocolRouter.Runtime.emit(
+                    event="debug/info", data=f"env has changed"
+                )
+
+                ... # Attention LLM palse env
+
+                ProtocolRouter.Runtime.emit(
+                    event="debug/info", data=f"triggle main LLM"
+                )
+                try:
+                    task = self.pending_inputs.get_nowait()
+                except queue.Empty:
+                    time.sleep(0.1)
+                    continue
+
+                process_llm_task(task)
+                self.last_env = {
+                    "pending_inputs": list(self.pending_inputs.queue),
+                    "idle": STATE.agent.idle,
+                    "unread_events": [],
+                }
 
 def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
@@ -313,9 +363,9 @@ def execute_tool_calls(tool_calls, tool_map, messages):
         )
 
 def process_llm_task(task):
-    messages = build_conversation_messages(task)
-
+    STATE.agent.idle = False
     try:
+        messages = build_conversation_messages(task)
         while True:
             tools, tool_map, tool_choice = collect_tools()
             result = stream_llm_response(messages, tools, tool_choice, task)
@@ -341,16 +391,19 @@ def process_llm_task(task):
         )
     finally:
         STATE.env.is_speaking = False
-        STATE.agent.unread_events.clear()
-        TTS.finished()
-        TTS.player_idle.wait()
+        try:
+            STATE.agent.unread_events.clear()
+            TTS.finished()
+            TTS.player_idle.wait()
+        finally:
+            STATE.agent.idle = True
 
 def llm_worker():
     while True:
         task = llm_queue.get()
         if task is None:
             break
-        process_llm_task(task)
+        AGENT.pending_inputs.put(task)
 
 def tts_worker():
     while True:
@@ -364,15 +417,12 @@ if __name__ == '__main__':
         CONFIG = ConfigManager()
         LOGGER = LogManager("system")
         
-
         OUTPUT = OutputManager()
         OUTPUT.register("stdout", enabled=True)
 
         LLM = LLMClient()
         TTS = TTSClient(state_callback=emit_tts_state)
-        STT = STTClient(
-            status_callback=write_stt_status
-        )
+        STT = STTClient(status_callback=write_stt_status)
         MEMORY = MemoryManager()
         PROMPT = PromptBuilder()
 
@@ -391,6 +441,8 @@ if __name__ == '__main__':
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
+
+        AGENT = Agent()
 
         LOGGER.logger.info("初始化完成")
         threading.Event().wait()  # loop
