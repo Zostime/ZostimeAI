@@ -33,7 +33,7 @@ def event_handler(event, data, meta):
 
     if event[0] == "debug":
         if event[1] == "info":
-            print(f"[DEBUG] info: {data}")
+            print(f"[DEBUG] info: {data}, t={meta}",)
 
 
 asyncio.run(system_states())

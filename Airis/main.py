@@ -155,7 +155,6 @@ class Agent:
                 try:
                     task = self.pending_inputs.get_nowait()
                 except queue.Empty:
-                    time.sleep(0.1)
                     continue
 
                 process_llm_task(task)
@@ -164,6 +163,8 @@ class Agent:
                     "idle": STATE.agent.idle,
                     "unread_events": [],
                 }
+            else:
+                time.sleep(0.1)
 
 def build_memory_context(user_input) -> str:
     user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
