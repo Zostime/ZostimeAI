@@ -123,7 +123,6 @@ class Agent:
         self.pending_inputs = queue.Queue()
         self.last_env = {
             "pending_inputs": list(self.pending_inputs.queue),
-            "idle": STATE.agent.idle,
             "unread_events": STATE.agent.unread_events.copy()
         }
         
@@ -132,22 +131,38 @@ class Agent:
     def attention(self):
         """积累 env 数据, Main LLM 处于空闲时 由 Attention LLM 判断是否触发 Main LLM"""
         while True:
-            # TODO: 延迟大, 不知何原因
-            idle = STATE.agent.idle
             env = {
                 "pending_inputs": list(self.pending_inputs.queue),
-                "idle": idle,
                 "unread_events": STATE.agent.unread_events.copy()
             }
 
             env_changed = (env != self.last_env)
             self.last_env = env
-            if idle and env_changed:
+            if STATE.agent.idle and env_changed:
                 ProtocolRouter.Runtime.emit(
                     event="debug/info", data=f"env has changed"
                 )
-
-                ... # Attention LLM palse env
+                
+                response = LLM.chat(
+                    messages=[
+                        {
+                            "role": "system", 
+                            "content": PROMPT.build(
+                             profile="attention", 
+                             context={"attention.md": {}}
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                env,
+                                ensure_ascii=False
+                            )
+                        }
+                    ]
+                )
+                if response["full_content"].strip() == "IGNORE":
+                    continue
 
                 ProtocolRouter.Runtime.emit(
                     event="debug/info", data=f"triggle main LLM"
@@ -155,12 +170,15 @@ class Agent:
                 try:
                     task = self.pending_inputs.get_nowait()
                 except queue.Empty:
-                    continue
+                    task = {       
+                        "source": "Airis",
+                        "content": "",
+                        "ephemeral_context": False
+                    }
 
                 process_llm_task(task)
                 self.last_env = {
                     "pending_inputs": list(self.pending_inputs.queue),
-                    "idle": STATE.agent.idle,
                     "unread_events": [],
                 }
             else:
@@ -202,7 +220,7 @@ def build_memory_context(user_input) -> str:
     return "\n".join(parts)
 
 def build_conversation_messages(task):
-    system_prompt = PROMPT.build({
+    system_prompt = PROMPT.build(profile="main", context={
         "system.md": {},
         "personality.md": {},
         "memory.md": {

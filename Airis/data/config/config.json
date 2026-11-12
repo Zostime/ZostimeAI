@@ -35,12 +35,17 @@
     "silence_timeout": 1.0
   },
   "prompts": {
-    "path": [
-      "src/core/prompts/system.md",
-      "src/core/prompts/personality.md",
-      "src/core/prompts/memory.md",
-      "src/core/prompts/runtime_state.md"
-    ]
+    "path": {
+      "main": [
+        "src/core/prompts/system.md",
+        "src/core/prompts/personality.md",
+        "src/core/prompts/memory.md",
+        "src/core/prompts/runtime_state.md"
+      ],
+      "attention": [
+        "src/core/prompts/attention.md"
+      ]
+    }
   },
   "memory": {
     "note": {

@@ -113,6 +113,84 @@ class LLMClient:
         )
         return client
 
+    def chat(
+            self,
+            messages: List[Dict[str, str]],
+            **kwargs
+    ) -> Dict[str, Any]:
+        """发送非流式请求并返回完整响应。"""
+        request_params = {
+            'model': kwargs.get('model', self.model),
+            'messages': messages,
+            'temperature': kwargs.get('temperature', self.temperature),
+            'max_tokens': kwargs.get('max_tokens', self.max_tokens),
+            'top_p': kwargs.get('top_p', self.top_p),
+            'frequency_penalty': kwargs.get('frequency_penalty', self.frequency_penalty),
+            'presence_penalty': kwargs.get('presence_penalty', self.presence_penalty),
+            'tools': kwargs.get('tools', None),
+            'tool_choice': kwargs.get('tool_choice', "auto"),
+            'response_format': kwargs.get('response_format', {"type": "text"}),
+            'stream': False
+        }
+
+        try:
+            response = self.client.chat.completions.create(**request_params)
+            message = response.choices[0].message
+            parsed_tool_calls = []
+
+            for tool_call in message.tool_calls or []:
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    self.logger.warning(
+                        f"JSON解析失败: {tool_call.function.arguments}"
+                    )
+                    arguments = tool_call.function.arguments
+
+                parsed_tool_calls.append({
+                    "id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": arguments
+                })
+
+            usage = response.usage
+            response_model = response.model or request_params['model']
+            usage_data = {
+                'prompt_tokens': usage.prompt_tokens if usage else 0,
+                'completion_tokens': usage.completion_tokens if usage else 0,
+                'total_tokens': usage.total_tokens if usage else 0
+            }
+            full_content = message.content or ""
+            response_data = {
+                'timestamp': datetime.now().isoformat(),
+                'model': response_model,
+                'request_params': {
+                    'temperature': request_params['temperature'],
+                    'max_tokens': request_params['max_tokens'],
+                    'top_p': request_params['top_p'],
+                    'frequency_penalty': request_params['frequency_penalty'],
+                    'presence_penalty': request_params['presence_penalty']
+                },
+                'messages': messages,
+                'tool_calls': parsed_tool_calls or None,
+                'response': {
+                    'role': 'assistant',
+                    'content': full_content
+                },
+                'usage': usage_data
+            }
+            self.cache.save_response(response_data)
+
+            return {
+                'full_content': full_content,
+                'tool_calls': parsed_tool_calls or None,
+                'tokens_used': usage,
+                'response_model': response_model,
+                'usage': usage_data
+            }
+        except Exception as e:
+            raise ValueError(f"非流式处理失败:{e}") from e
+
     def chat_stream(
             self,
             messages: List[Dict[str, str]],

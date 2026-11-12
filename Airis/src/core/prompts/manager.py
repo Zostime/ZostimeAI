@@ -7,14 +7,14 @@ from ..common.config import ConfigManager   #配置管理器
 class PromptBuilder:
     def __init__(self):
         self.config = ConfigManager()
-        self.prompts_path = self.config.get_json("prompts.path")
         self.prompt = ""
 
-    def build(self, context: dict = None) -> str:
+    def build(self, profile, context: dict = None) -> str:
+        prompts_path = self.config.get_json(f"prompts.path.{profile}")
         context = context or {}
         parts = []
 
-        for prompt in self.prompts_path:
+        for prompt in prompts_path:
             prompt_path = self.config.base_dir / prompt
             try:
                 with open(prompt_path, "r", encoding="utf-8") as f:
