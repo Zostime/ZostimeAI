@@ -137,7 +137,6 @@ class Agent:
             }
 
             env_changed = (env != self.last_env)
-            self.last_env = env
             if STATE.agent.idle and env_changed:
                 ProtocolRouter.Runtime.emit(
                     event="debug/info", data=f"env has changed"
@@ -162,21 +161,28 @@ class Agent:
                     ]
                 )
                 if response["full_content"].strip() == "IGNORE":
+                    self.last_env = env
                     continue
 
                 ProtocolRouter.Runtime.emit(
                     event="debug/info", data=f"triggle main LLM"
                 )
-                try:
-                    task = self.pending_inputs.get_nowait()
-                except queue.Empty:
-                    task = {       
+
+                tasks = []
+                for _ in range(len(env["pending_inputs"])):
+                    try:
+                        tasks.append(self.pending_inputs.get_nowait())
+                    except queue.Empty:
+                        break
+
+                if not tasks:
+                    tasks = [{
                         "source": "Airis",
                         "content": "",
                         "ephemeral_context": False
-                    }
+                    }]
 
-                process_llm_task(task)
+                process_llm_task(tasks)
                 self.last_env = {
                     "pending_inputs": list(self.pending_inputs.queue),
                     "unread_events": [],
@@ -219,7 +225,7 @@ def build_memory_context(user_input) -> str:
 
     return "\n".join(parts)
 
-def build_conversation_messages(task):
+def build_conversation_messages(tasks):
     system_prompt = PROMPT.build(profile="main", context={
         "system.md": {},
         "personality.md": {},
@@ -251,11 +257,12 @@ def build_conversation_messages(task):
             {"role": "assistant", "content": assistant_entry["memory"]}
         ])
 
-    messages.append({
-        "role": "user",
-        "name": task["source"],
-        "content": task["content"]
-    })
+    for task in tasks:
+        messages.append({
+            "role": "user",
+            "name": task["source"],
+            "content": task["content"]
+        })
     return messages
 
 def collect_tools():
@@ -285,10 +292,15 @@ def collect_tools():
     tool_choice = "required" if forced_tools else "auto"
     return tools, tool_map, tool_choice
 
-def stream_llm_response(messages, tools, tool_choice, task):
+def stream_llm_response(messages, tools, tool_choice, tasks):
+    sources = [task["source"] for task in tasks]
+    stream_data = {"source": sources[0]}
+    if len(sources) > 1:
+        stream_data["sources"] = sources
+
     ProtocolRouter.Runtime.emit(
         event="llm/stream_start",
-        data={"source": task["source"]}
+        data=stream_data
     )
     try:
         generator = LLM.chat_stream(
@@ -309,9 +321,20 @@ def stream_llm_response(messages, tools, tool_choice, task):
             except StopIteration as stop:
                 result = stop.value
                 TTS.feed(buffer)
-                if not task["ephemeral_context"]:
-                    MEMORY.add_memory(result["full_content"], user_id="Airis")
-                    MEMORY.add_memory(task["content"], user_id=task["source"])
+                if not result.get("tool_calls"):
+                    persistent_tasks = [
+                        task for task in tasks
+                        if not task["ephemeral_context"]
+                    ]
+                    if persistent_tasks:
+                        if len(persistent_tasks) == len(tasks):
+                            MEMORY.add_memory(
+                                result["full_content"], user_id="Airis"
+                            )
+                        for task in persistent_tasks:
+                            MEMORY.add_memory(
+                                task["content"], user_id=task["source"]
+                            )
                 return result
 
             buffer += chunk
@@ -325,7 +348,7 @@ def stream_llm_response(messages, tools, tool_choice, task):
     finally:
         ProtocolRouter.Runtime.emit(
             event="llm/stream_end",
-            data={"source": task["source"]}
+            data=stream_data
         )
 
 def append_assistant_tool_message(messages, result, tool_calls):
@@ -381,13 +404,16 @@ def execute_tool_calls(tool_calls, tool_map, messages):
             data={"name": tool_call["name"]}
         )
 
-def process_llm_task(task):
+def process_llm_task(tasks):
+    if isinstance(tasks, dict):
+        tasks = [tasks]
+
     STATE.agent.idle = False
     try:
-        messages = build_conversation_messages(task)
+        messages = build_conversation_messages(tasks)
         while True:
             tools, tool_map, tool_choice = collect_tools()
-            result = stream_llm_response(messages, tools, tool_choice, task)
+            result = stream_llm_response(messages, tools, tool_choice, tasks)
             if result is None or INTERRUPT.is_interrupted():
                 break
 
