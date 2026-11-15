@@ -23,8 +23,6 @@ USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
 
-LLM_TASK_LOCK = threading.Lock()
-
 def write_stt_status(message: str, end: str = '') -> None:
     message = message.lstrip("\r")
     OUTPUT.write("stdout", f"\r\x1b[2K{message}", end=end)
@@ -53,7 +51,7 @@ class EventHandlers:
                 return
 
         INTERRUPT.clear()
-        STATE.agent.memory = build_memory_context(data['content'])
+        STATE.agent.memory = AGENT.build_memory_context(data['content'])
 
         STATE.env.input = {
             "type": data['type'],
@@ -145,8 +143,51 @@ class Agent:
             "pending_inputs": list(self.pending_inputs.queue),
             "unread_events": STATE.agent.unread_events.copy()
         }
+
+        self.llm_task_lock = threading.Lock()
         
         threading.Thread(target=self.attention, daemon=True).start()
+
+    def main(self, tasks):
+        """接受 tasks 并处理 LLM + func_call 请求"""
+        with self.llm_task_lock:
+            if isinstance(tasks, dict):
+                tasks = [tasks]
+
+            STATE.agent.idle = False
+            try:
+                messages = self.build_conversation_messages(tasks)
+                while True:
+                    tools, tool_map, tool_choice = self.collect_tools(tasks)
+                    result = self.stream_llm_response(messages, tools, tool_choice, tasks)
+                    if result is None or INTERRUPT.is_interrupted():
+                        break
+
+                    tool_calls = result.get("tool_calls") or []
+                    if not tool_calls:
+                        break
+
+                    self.append_assistant_tool_message(messages, result, tool_calls)
+                    self.execute_tool_calls(tool_calls, tool_map, messages)
+
+                    if INTERRUPT.is_interrupted():
+                        break
+
+                    TTS.finished()
+                    TTS.player_idle.wait()
+            except Exception as error:
+                TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
+                LOGGER.logger.error(
+                    f"处理 LLM 请求时发生未知错误: {error}", exc_info=True
+                )
+            finally:
+                STATE.env.is_speaking = False
+                try:
+                    STATE.agent.unread_events.clear()
+                    TTS.finished()
+                    TTS.player_idle.wait()
+                finally:
+                    STATE.agent.idle = True
 
     def attention(self):
         """积累 env 数据, Main LLM 处于空闲时 由 Attention LLM 判断是否触发 Main LLM"""
@@ -202,7 +243,7 @@ class Agent:
                         "ephemeral_context": False
                     }]
 
-                process_llm_task(tasks)
+                self.main(tasks)
                 self.last_env = {
                     "pending_inputs": [],
                     "unread_events": [],
@@ -210,281 +251,238 @@ class Agent:
             else:
                 time.sleep(0.1)
 
-def build_memory_context(user_input) -> str:
-    user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
-    assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
+    def build_memory_context(self, user_input) -> str:
+        user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
+        assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
 
-    note = MEMORY.note.read()
+        note = MEMORY.note.read()
 
-    # LTM排序(相关性高在前)
-    user_ltm = sorted(user_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
-    assistant_ltm = sorted(assistant_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
+        # LTM排序(相关性高在前)
+        user_ltm = sorted(user_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
+        assistant_ltm = sorted(assistant_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
 
-    parts = ["[记忆上下文]"]
+        parts = ["[记忆上下文]"]
 
-    if user_ltm:
-        parts.append("\n用户长期记忆:")
-        for entry in user_ltm:
-            memory = entry.get("memory")
-            score = entry.get("score")
-            parts.append(f"- [{score:.2f}] {memory}")
+        if user_ltm:
+            parts.append("\n用户长期记忆:")
+            for entry in user_ltm:
+                memory = entry.get("memory")
+                score = entry.get("score")
+                parts.append(f"- [{score:.2f}] {memory}")
 
-    if assistant_ltm:
-        parts.append("\n助手长期记忆:")
-        for entry in assistant_ltm:
-            memory = entry.get("memory")
-            score = entry.get("score")
-            parts.append(f"- [{score:.2f}] {memory}")
+        if assistant_ltm:
+            parts.append("\n助手长期记忆:")
+            for entry in assistant_ltm:
+                memory = entry.get("memory")
+                score = entry.get("score")
+                parts.append(f"- [{score:.2f}] {memory}")
 
-    if note:
-        parts.append("\nNOTE:")
-        parts.append(note)
+        if note:
+            parts.append("\nNOTE:")
+            parts.append(note)
 
-    if len(parts) == 1:
-        return "没有相关记忆"
+        if len(parts) == 1:
+            return "没有相关记忆"
 
-    return "\n".join(parts)
+        return "\n".join(parts)
 
-def build_conversation_messages(tasks):
-    system_prompt = PROMPT.build(profile="main", context={
-        "system.md": {},
-        "personality.md": {},
-        "memory.md": {
-            "memory": STATE.agent.memory,
-        },
-        "runtime_state.md": {
-            "current_time": datetime.datetime.now(),
-            "unread_events": STATE.agent.unread_events,
-        }
-    })
-
-    messages = [{"role": "system", "content": system_prompt}]
-    user_stm = MEMORY.search_stm(USER)
-    assistant_stm = MEMORY.search_stm("Airis")
-    user_stm = sorted(user_stm, key=lambda item: item.get("timestamp", 0))
-    assistant_stm = sorted(
-        assistant_stm,
-        key=lambda item: item.get("timestamp", 0)
-    )
-
-    for user_entry, assistant_entry in zip(user_stm, assistant_stm):
-        messages.extend([
-            {
-                "role": "user",
-                "name": USER,
-                "content": user_entry["memory"]
+    def build_conversation_messages(self, tasks):
+        system_prompt = PROMPT.build(profile="main", context={
+            "system.md": {},
+            "personality.md": {},
+            "memory.md": {
+                "memory": STATE.agent.memory,
             },
-            {"role": "assistant", "content": assistant_entry["memory"]}
-        ])
-
-    for task in tasks:
-        messages.append({
-            "role": "user",
-            "name": task["source"],
-            "content": task["content"]
+            "runtime_state.md": {
+                "current_time": datetime.datetime.now(),
+                "unread_events": STATE.agent.unread_events,
+            }
         })
-    return messages
 
-def collect_tools(tasks):
-    tools = []
-    tool_map = {}
-    forced_actions = {}
-
-    for task_index, task in enumerate(tasks):
-        if task.get("type") == "force_action":
-            session_id = task.get("session_id")
-            action_names = task.get("action_names") or []
-            if session_id is None or not action_names:
-                raise ValueError(
-                    "force_action task must include session_id and action_names "
-                    f"(task_index={task_index}, source={task.get('source')!r}, "
-                    f"session_id={session_id!r}, "
-                    f"action_names={task.get('action_names')!r})"
-                )
-            forced_actions.setdefault(session_id, set()).update(action_names)
-
-    for session in ProtocolRouter.Game.sessions.values():
-        for action in session.registered_actions.values():
-            allowed_names = forced_actions.get(session.client_id)
-            if forced_actions and (
-                allowed_names is None or action["name"] not in allowed_names
-            ):
-                continue
-
-            safe_name = f"{session.client_id}_{action['name']}"
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": safe_name,
-                    "description": action["description"],
-                    "parameters": action.get("schema") or {
-                        "type": "object",
-                        "properties": {}
-                    }
-                }
-            })
-            tool_map[safe_name] = (session, action["name"])
-
-    if forced_actions and not tools:
-        raise ValueError("force_action task has no registered action names")
-
-    tool_choice = "required" if forced_actions else "auto"
-    return tools, tool_map, tool_choice
-
-def stream_llm_response(messages, tools, tool_choice, tasks):
-    sources = [task["source"] for task in tasks]
-    stream_data = {"source": sources[0]}
-    if len(sources) > 1:
-        stream_data["sources"] = sources
-
-    ProtocolRouter.Runtime.emit(
-        event="llm/stream_start",
-        data=stream_data
-    )
-    try:
-        generator = LLM.chat_stream(
-            messages=messages,
-            tools=tools if ENABLE_TOOLS else None,
-            tool_choice=tool_choice
+        messages = [{"role": "system", "content": system_prompt}]
+        user_stm = MEMORY.search_stm(USER)
+        assistant_stm = MEMORY.search_stm("Airis")
+        user_stm = sorted(user_stm, key=lambda item: item.get("timestamp", 0))
+        assistant_stm = sorted(
+            assistant_stm,
+            key=lambda item: item.get("timestamp", 0)
         )
-        buffer = ""
-        sentence_endings = (".", "。", "!", "！", "?", "？", "\n")
 
-        while True:
-            if INTERRUPT.is_interrupted():
-                generator.close()
-                return None
+        for user_entry, assistant_entry in zip(user_stm, assistant_stm):
+            messages.extend([
+                {
+                    "role": "user",
+                    "name": USER,
+                    "content": user_entry["memory"]
+                },
+                {"role": "assistant", "content": assistant_entry["memory"]}
+            ])
 
-            try:
-                chunk = next(generator)
-            except StopIteration as stop:
-                result = stop.value
-                TTS.feed(buffer)
-                if not result.get("tool_calls"):
-                    persistent_tasks = [
-                        task for task in tasks
-                        if not task["ephemeral_context"]
-                    ]
-                    if persistent_tasks:
-                        if len(persistent_tasks) == len(tasks):
-                            MEMORY.add_memory(
-                                result["full_content"], user_id="Airis"
-                            )
-                        for task in persistent_tasks:
-                            MEMORY.add_memory(
-                                task["content"], user_id=task["source"]
-                            )
-                return result
+        for task in tasks:
+            messages.append({
+                "role": "user",
+                "name": task["source"],
+                "content": task["content"]
+            })
+        return messages
 
-            buffer += chunk
-            if any(ending in buffer for ending in sentence_endings):
-                TTS.feed(buffer)
-                buffer = ""
+    def collect_tools(self, tasks):
+        tools = []
+        tool_map = {}
+        forced_actions = {}
 
-            ProtocolRouter.Runtime.emit(
-                event="llm/stream", data={"chunk": chunk}
-            )
-    finally:
+        for task_index, task in enumerate(tasks):
+            if task.get("type") == "force_action":
+                session_id = task.get("session_id")
+                action_names = task.get("action_names") or []
+                if session_id is None or not action_names:
+                    raise ValueError(
+                        "force_action task must include session_id and action_names "
+                        f"(task_index={task_index}, source={task.get('source')!r}, "
+                        f"session_id={session_id!r}, "
+                        f"action_names={task.get('action_names')!r})"
+                    )
+                forced_actions.setdefault(session_id, set()).update(action_names)
+
+        for session in ProtocolRouter.Game.sessions.values():
+            for action in session.registered_actions.values():
+                allowed_names = forced_actions.get(session.client_id)
+                if forced_actions and (
+                    allowed_names is None or action["name"] not in allowed_names
+                ):
+                    continue
+
+                safe_name = f"{session.client_id}_{action['name']}"
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": safe_name,
+                        "description": action["description"],
+                        "parameters": action.get("schema") or {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    }
+                })
+                tool_map[safe_name] = (session, action["name"])
+
+        if forced_actions and not tools:
+            raise ValueError("force_action task has no registered action names")
+
+        tool_choice = "required" if forced_actions else "auto"
+        return tools, tool_map, tool_choice
+
+    def stream_llm_response(self, messages, tools, tool_choice, tasks):
+        sources = [task["source"] for task in tasks]
+        stream_data = {"source": sources[0]}
+        if len(sources) > 1:
+            stream_data["sources"] = sources
+
         ProtocolRouter.Runtime.emit(
-            event="llm/stream_end",
+            event="llm/stream_start",
             data=stream_data
         )
-
-def append_assistant_tool_message(messages, result, tool_calls):
-    messages.append({
-        "role": "assistant",
-        "content": result.get("full_content"),
-        "tool_calls": [
-            {
-                "id": tool_call["id"],
-                "type": "function",
-                "function": {
-                    "name": tool_call["name"],
-                    "arguments": json.dumps(tool_call["arguments"])
-                }
-            }
-            for tool_call in tool_calls
-        ]
-    })
-
-def execute_tool_calls(tool_calls, tool_map, messages):
-    for tool_call in tool_calls:
-        if INTERRUPT.is_interrupted():
-            break
-
         try:
-            session, real_name = tool_map[tool_call["name"]]
-            result = ProtocolRouter.Game.run_action(
-                session=session,
-                data={
-                    "command": "action",
-                    "data": {
-                        "id": tool_call["id"],
-                        "name": real_name,
-                        "data": json.dumps(tool_call.get("arguments", {}))
-                    }
-                }
+            generator = LLM.chat_stream(
+                messages=messages,
+                tools=tools if ENABLE_TOOLS else None,
+                tool_choice=tool_choice
+            )
+            buffer = ""
+            sentence_endings = (".", "。", "!", "！", "?", "？", "\n")
+
+            while True:
+                if INTERRUPT.is_interrupted():
+                    generator.close()
+                    return None
+
+                try:
+                    chunk = next(generator)
+                except StopIteration as stop:
+                    result = stop.value
+                    TTS.feed(buffer)
+                    if not result.get("tool_calls"):
+                        persistent_tasks = [
+                            task for task in tasks
+                            if not task["ephemeral_context"]
+                        ]
+                        if persistent_tasks:
+                            if len(persistent_tasks) == len(tasks):
+                                MEMORY.add_memory(
+                                    result["full_content"], user_id="Airis"
+                                )
+                            for task in persistent_tasks:
+                                MEMORY.add_memory(
+                                    task["content"], user_id=task["source"]
+                                )
+                    return result
+
+                buffer += chunk
+                if any(ending in buffer for ending in sentence_endings):
+                    TTS.feed(buffer)
+                    buffer = ""
+
+                ProtocolRouter.Runtime.emit(
+                    event="llm/stream", data={"chunk": chunk}
+                )
+        finally:
+            ProtocolRouter.Runtime.emit(
+                event="llm/stream_end",
+                data=stream_data
             )
 
-            if result.get("success"):
-                session.forced_action_names.clear()
-                session.force_payload = None
-            output = result.get("message", "")
-        except Exception as error:
-            output = f"工具执行失败: {error}"
-        
+    def append_assistant_tool_message(self, messages, result, tool_calls):
         messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call["id"],
-            "content": str(output)
+            "role": "assistant",
+            "content": result.get("full_content"),
+            "tool_calls": [
+                {
+                    "id": tool_call["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tool_call["name"],
+                        "arguments": json.dumps(tool_call["arguments"])
+                    }
+                }
+                for tool_call in tool_calls
+            ]
         })
-        ProtocolRouter.Runtime.emit(
-            event="llm/tool_call",
-            data={"name": tool_call["name"]}
-        )
 
-def process_llm_task(tasks):
-    with LLM_TASK_LOCK:
-        _process_llm_task(tasks)
-
-def _process_llm_task(tasks):
-    if isinstance(tasks, dict):
-        tasks = [tasks]
-
-    STATE.agent.idle = False
-    try:
-        messages = build_conversation_messages(tasks)
-        while True:
-            tools, tool_map, tool_choice = collect_tools(tasks)
-            result = stream_llm_response(messages, tools, tool_choice, tasks)
-            if result is None or INTERRUPT.is_interrupted():
-                break
-
-            tool_calls = result.get("tool_calls") or []
-            if not tool_calls:
-                break
-
-            append_assistant_tool_message(messages, result, tool_calls)
-            execute_tool_calls(tool_calls, tool_map, messages)
-
+    def execute_tool_calls(self, tool_calls, tool_map, messages):
+        for tool_call in tool_calls:
             if INTERRUPT.is_interrupted():
                 break
 
-            TTS.finished()
-            TTS.player_idle.wait()
-    except Exception as error:
-        TTS.feed(f"Someone tell {USER} there is a problem with my AI.")
-        LOGGER.logger.error(
-            f"处理 LLM 请求时发生未知错误: {error}", exc_info=True
-        )
-    finally:
-        STATE.env.is_speaking = False
-        try:
-            STATE.agent.unread_events.clear()
-            TTS.finished()
-            TTS.player_idle.wait()
-        finally:
-            STATE.agent.idle = True
+            try:
+                session, real_name = tool_map[tool_call["name"]]
+                result = ProtocolRouter.Game.run_action(
+                    session=session,
+                    data={
+                        "command": "action",
+                        "data": {
+                            "id": tool_call["id"],
+                            "name": real_name,
+                            "data": json.dumps(tool_call.get("arguments", {}))
+                        }
+                    }
+                )
+
+                if result.get("success"):
+                    session.forced_action_names.clear()
+                    session.force_payload = None
+                output = result.get("message", "")
+            except Exception as error:
+                output = f"工具执行失败: {error}"
+            
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": str(output)
+            })
+            ProtocolRouter.Runtime.emit(
+                event="llm/tool_call",
+                data={"name": tool_call["name"]}
+            )
 
 def llm_worker():
     while True:
@@ -520,7 +518,7 @@ def llm_worker():
             elif priority == "critical":
                 TTS.interrupt()
                 
-            process_llm_task(tasks)
+            AGENT.main(tasks)
 
         else:
             AGENT.pending_inputs.put(task)
