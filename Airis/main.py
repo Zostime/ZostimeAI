@@ -157,8 +157,13 @@ class Agent:
             STATE.agent.idle = False
             try:
                 messages = self.build_conversation_messages(tasks)
+                force_action_pending = any(
+                    task.get("type") == "force_action" for task in tasks
+                )
                 while True:
-                    tools, tool_map, tool_choice = self.collect_tools(tasks)
+                    tools, tool_map, tool_choice = self.collect_tools(
+                        tasks, force_action_pending
+                    )
                     result = self.stream_llm_response(messages, tools, tool_choice, tasks)
                     if result is None or INTERRUPT.is_interrupted():
                         break
@@ -168,7 +173,8 @@ class Agent:
                         break
 
                     self.append_assistant_tool_message(messages, result, tool_calls)
-                    self.execute_tool_calls(tool_calls, tool_map, messages)
+                    if self.execute_tool_calls(tool_calls, tool_map, messages):
+                        force_action_pending = False
 
                     if INTERRUPT.is_interrupted():
                         break
@@ -326,7 +332,7 @@ class Agent:
             })
         return messages
 
-    def collect_tools(self, tasks):
+    def collect_tools(self, tasks, force_action_pending):
         tools = []
         tool_map = {}
         forced_actions = {}
@@ -369,7 +375,9 @@ class Agent:
         if forced_actions and not tools:
             raise ValueError("force_action task has no registered action names")
 
-        tool_choice = "required" if forced_actions else "auto"
+        tool_choice = (
+            "required" if forced_actions and force_action_pending else "auto"
+        )
         return tools, tool_map, tool_choice
 
     def stream_llm_response(self, messages, tools, tool_choice, tasks):
@@ -449,6 +457,7 @@ class Agent:
         })
 
     def execute_tool_calls(self, tool_calls, tool_map, messages):
+        action_succeeded = False
         for tool_call in tool_calls:
             if INTERRUPT.is_interrupted():
                 break
@@ -468,6 +477,7 @@ class Agent:
                 )
 
                 if result.get("success"):
+                    action_succeeded = True
                     session.forced_action_names.clear()
                     session.force_payload = None
                 output = result.get("message", "")
@@ -483,6 +493,7 @@ class Agent:
                 event="llm/tool_call",
                 data={"name": tool_call["name"]}
             )
+        return action_succeeded
 
 def llm_worker():
     while True:

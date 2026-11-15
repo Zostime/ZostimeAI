@@ -4,6 +4,7 @@ import numpy as np
 import threading
 import queue
 import re
+import time
 from typing import Callable, Optional
 
 from ..common.config import ConfigManager
@@ -40,6 +41,7 @@ class TTSClient:
         self.played_frames = 0
         self.played_frames_lock = threading.Lock()
         self._playback_state_lock = threading.Lock()
+        self._player_lock = threading.Lock()
         self._is_playing = False
         self.sentence_start_marker = object()
 
@@ -239,8 +241,11 @@ class TTSClient:
             try:
                 self.sentence_boundary_idle.clear()
                 self.player_idle.clear()
-                self._start_playback()
-                self.player.write(np.frombuffer(data, dtype=np.int16))
+                with self._player_lock:
+                    if self.interrupt_audio.is_set():
+                        continue
+                    self._start_playback()
+                    self.player.write(np.frombuffer(data, dtype=np.int16))
                 frames = len(data) // 2
                 with self.played_frames_lock:
                     self.played_frames += frames
@@ -340,11 +345,28 @@ class TTSClient:
         except Exception as e:
             self.logger.error(f"Error stopping synthesis: {e}")
 
-        if self.player and self.player.active:
-            try:
-                self.player.stop()
-            except Exception as e:
-                self.logger.error(f"Error stopping audio stream: {e}")
+        player_ready = True
+        if self.player:
+            with self._player_lock:
+                try:
+                    if self.player.active:
+                        self.player.abort()
+                except Exception as e:
+                    self.logger.error(f"Error aborting audio stream: {e}")
+
+                for attempt in range(5):
+                    try:
+                        if not self.player.active:
+                            self.player.start()
+                        break
+                    except Exception as e:
+                        if attempt == 4:
+                            self.logger.error(
+                                f"Error reopening audio stream after retries: {e}"
+                            )
+                            player_ready = False
+                        else:
+                            time.sleep(0.1 * (attempt + 1))
 
         self._drain_queue(self.audio_queue)
         self._drain_queue(self.text_queue)
@@ -355,19 +377,10 @@ class TTSClient:
         with self._sentence_end_lock:
             self._sentence_end_sent = False
 
-        if self.player:
-            try:
-                self.player.abort()
-            except Exception as e:
-                self.logger.error(f"Error closing audio stream: {e}")
-            try:
-                self.player.start()
-            except Exception as e:
-                self.logger.error(f"Error reopening audio stream: {e}")
-
         self.synthesis_idle.set()
         self.stop_requested = False
-        self.interrupt_audio.clear()
+        if player_ready:
+            self.interrupt_audio.clear()
 
     @staticmethod
     def _drain_queue(q):
