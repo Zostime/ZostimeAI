@@ -185,7 +185,7 @@ class ProtocolRouter:
                 priority = data.get("priority", "low")
                 ephemeral_context = data.get("ephemeral_context", False)
 
-                session.forced_action_names = action_names
+                session.forced_action_names = list(action_names)
                 if not ephemeral_context:
                     session.force_payload = {
                         "query": query,
@@ -200,6 +200,8 @@ class ProtocolRouter:
                         "source": game,
                         "content": query,
                         "ephemeral_context": ephemeral_context,
+                        "session_id": session.client_id,
+                        "action_names": action_names,
                     },
                     priority=priority
                 )  # 触发LLM
