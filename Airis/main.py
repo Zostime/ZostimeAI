@@ -23,6 +23,8 @@ USER = "Zostime"
 ENABLE_STT = False
 ENABLE_TOOLS = True  # 某些 LLM 不支持 tool_calls 则设为 False
 
+LLM_TASK_LOCK = threading.Lock()
+
 def write_stt_status(message: str, end: str = '') -> None:
     message = message.lstrip("\r")
     OUTPUT.write("stdout", f"\r\x1b[2K{message}", end=end)
@@ -36,8 +38,21 @@ def emit_tts_state(state: str) -> None:
 class EventHandlers:
     @staticmethod
     def input_handler(event):
-        INTERRUPT.clear()
         data = event["data"]
+        if data.get("type") == "force_action":
+            action_names = data.get("action_names")
+            if (
+                not data.get("session_id")
+                or not isinstance(action_names, list)
+                or not action_names
+                or any(not isinstance(name, str) or not name.strip() for name in action_names)
+            ):
+                LOGGER.logger.error(
+                    "拒绝无效的 force_action 输入: 必须提供 session_id 和非空 action_names"
+                )
+                return
+
+        INTERRUPT.clear()
         STATE.agent.memory = build_memory_context(data['content'])
 
         STATE.env.input = {
@@ -48,12 +63,17 @@ class EventHandlers:
             "timestamp": time.time()
         }
 
-        llm_queue.put({
+        task = {
             "type": data['type'],
             "source": data['source'],
             "content": data['content'],
-            "ephemeral_context": data['ephemeral_context']
-        })
+            "ephemeral_context": data['ephemeral_context'],
+            "priority": event['priority']
+        }
+        if data['type'] == "force_action":
+            task["session_id"] = data["session_id"]
+            task["action_names"] = data.get("action_names", [])
+        llm_queue.put(task)
 
     # noinspection PyUnusedLocal
     @staticmethod
@@ -184,7 +204,7 @@ class Agent:
 
                 process_llm_task(tasks)
                 self.last_env = {
-                    "pending_inputs": list(self.pending_inputs.queue),
+                    "pending_inputs": [],
                     "unread_events": [],
                 }
             else:
@@ -265,13 +285,32 @@ def build_conversation_messages(tasks):
         })
     return messages
 
-def collect_tools():
+def collect_tools(tasks):
     tools = []
     tool_map = {}
-    forced_tools = []
+    forced_actions = {}
+
+    for task_index, task in enumerate(tasks):
+        if task.get("type") == "force_action":
+            session_id = task.get("session_id")
+            action_names = task.get("action_names") or []
+            if session_id is None or not action_names:
+                raise ValueError(
+                    "force_action task must include session_id and action_names "
+                    f"(task_index={task_index}, source={task.get('source')!r}, "
+                    f"session_id={session_id!r}, "
+                    f"action_names={task.get('action_names')!r})"
+                )
+            forced_actions.setdefault(session_id, set()).update(action_names)
 
     for session in ProtocolRouter.Game.sessions.values():
         for action in session.registered_actions.values():
+            allowed_names = forced_actions.get(session.client_id)
+            if forced_actions and (
+                allowed_names is None or action["name"] not in allowed_names
+            ):
+                continue
+
             safe_name = f"{session.client_id}_{action['name']}"
             tools.append({
                 "type": "function",
@@ -286,10 +325,10 @@ def collect_tools():
             })
             tool_map[safe_name] = (session, action["name"])
 
-        for name in session.forced_action_names:
-            forced_tools.append(f"{session.client_id}_{name}")
+    if forced_actions and not tools:
+        raise ValueError("force_action task has no registered action names")
 
-    tool_choice = "required" if forced_tools else "auto"
+    tool_choice = "required" if forced_actions else "auto"
     return tools, tool_map, tool_choice
 
 def stream_llm_response(messages, tools, tool_choice, tasks):
@@ -393,7 +432,7 @@ def execute_tool_calls(tool_calls, tool_map, messages):
             output = result.get("message", "")
         except Exception as error:
             output = f"工具执行失败: {error}"
-
+        
         messages.append({
             "role": "tool",
             "tool_call_id": tool_call["id"],
@@ -405,6 +444,10 @@ def execute_tool_calls(tool_calls, tool_map, messages):
         )
 
 def process_llm_task(tasks):
+    with LLM_TASK_LOCK:
+        _process_llm_task(tasks)
+
+def _process_llm_task(tasks):
     if isinstance(tasks, dict):
         tasks = [tasks]
 
@@ -412,7 +455,7 @@ def process_llm_task(tasks):
     try:
         messages = build_conversation_messages(tasks)
         while True:
-            tools, tool_map, tool_choice = collect_tools()
+            tools, tool_map, tool_choice = collect_tools(tasks)
             result = stream_llm_response(messages, tools, tool_choice, tasks)
             if result is None or INTERRUPT.is_interrupted():
                 break
@@ -448,7 +491,39 @@ def llm_worker():
         task = llm_queue.get()
         if task is None:
             break
-        AGENT.pending_inputs.put(task)
+        
+        if task['type'] == "force_action":  # 不经过 Attention LLM
+            priority = task['priority']
+
+            tasks = []  # tasks 组装
+            while True:
+                try:
+                    tasks.append(AGENT.pending_inputs.get_nowait())
+                except queue.Empty:
+                    break
+            tasks.append(task)
+
+            if TTS.player_idle.is_set():
+                pass
+
+            elif priority == "low":
+                TTS.player_idle.wait()
+
+            elif priority == "medium":
+                TTS.sentence_boundary_idle.wait()
+                TTS.interrupt()
+
+            elif priority == "high":
+                TTS.word_boundary_idle.wait()
+                TTS.interrupt()
+
+            elif priority == "critical":
+                TTS.interrupt()
+                
+            process_llm_task(tasks)
+
+        else:
+            AGENT.pending_inputs.put(task)
 
 def tts_worker():
     while True:
