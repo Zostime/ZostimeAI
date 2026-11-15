@@ -31,6 +31,7 @@ class TTSClient:
         self.audio_queue = queue.Queue()
         self.finish_marker = object()
         self.playback_end_marker = object()
+        self.sentence_playback_end_marker = object()
         self._has_pending_text = False
         self.boundary_queue = queue.Queue()
         self.subtitle_queue = queue.Queue()
@@ -55,6 +56,10 @@ class TTSClient:
         self.interrupt_audio = threading.Event()
 
         self._text_cache = ""
+        self.sentence_boundary_idle = threading.Event()
+        self.sentence_boundary_idle.set()
+        self.word_boundary_idle = threading.Event()
+        self.word_boundary_idle.set()
         self.player_idle = threading.Event()
         self.player_idle.set()
 
@@ -95,6 +100,7 @@ class TTSClient:
         self.subtitle_thread.start()
 
     def _on_word_boundary(self, evt):
+        self.word_boundary_idle.clear()
         self.boundary_queue.put_nowait(evt)
 
     def _subtitle_worker(self):
@@ -115,6 +121,7 @@ class TTSClient:
                 if evt is None:
                     return
                 if evt is self.SENTENCE_END:
+                    self.word_boundary_idle.set()
                     break
 
                 text = evt.text
@@ -144,6 +151,7 @@ class TTSClient:
                                 filtered_index = self._text_cache.find('\0')
                                 if filtered_index != -1:
                                     self._text_cache = self._text_cache[filtered_index + 1:]
+                        self.word_boundary_idle.set()
                         break
 
     def _on_synthesizing(self, evt):
@@ -184,10 +192,12 @@ class TTSClient:
 
     def _on_synthesis_completed(self, evt): # noqa
         self._send_sentence_end()
+        self.audio_queue.put(self.sentence_playback_end_marker)
         self.synthesis_idle.set()
 
     def _on_synthesis_canceled(self, evt):
         self._send_sentence_end()
+        self.audio_queue.put(self.sentence_playback_end_marker)
         self.synthesis_idle.set()
         cancellation_details = evt.result.cancellation_details
         if cancellation_details.reason == speechsdk.CancellationReason.Error:
@@ -212,6 +222,11 @@ class TTSClient:
                 self._finish_playback("end")
                 continue
 
+            if data is self.sentence_playback_end_marker:
+                self.sentence_boundary_idle.set()
+                self.word_boundary_idle.set()
+                continue
+
             if data is self.sentence_start_marker:
                 with self.played_frames_lock:
                     base_frame = self.played_frames
@@ -222,6 +237,7 @@ class TTSClient:
                 continue
 
             try:
+                self.sentence_boundary_idle.clear()
                 self.player_idle.clear()
                 self._start_playback()
                 self.player.write(np.frombuffer(data, dtype=np.int16))
@@ -232,6 +248,7 @@ class TTSClient:
                 if not self.running:
                     break
                 self.logger.error(f"Audio write error: {e}")
+                self.sentence_boundary_idle.set()
                 self._finish_playback("end")
                 if self.interrupt_audio.is_set():
                     continue
@@ -281,6 +298,7 @@ class TTSClient:
             except Exception as e:
                 self.logger.error(f"Synthesis start error: {e}")
                 self._send_sentence_end()
+                self.audio_queue.put(self.sentence_playback_end_marker)
                 self.synthesis_idle.set()
 
     def feed(self, text: str) -> None:
@@ -294,7 +312,6 @@ class TTSClient:
         if not self.running:
             return
         if not self._has_pending_text:
-            self.player_idle.set()
             return
         self._has_pending_text = False
         self._text_cache += '\0'
@@ -313,6 +330,8 @@ class TTSClient:
         with self._playback_state_lock:
             self._is_playing = False
         self.player_idle.set()
+        self.sentence_boundary_idle.set()
+        self.word_boundary_idle.set()
         self.interrupt_audio.set()
         if was_active:
             self._emit_state("interrupt")
@@ -361,6 +380,8 @@ class TTSClient:
     def close(self):
         self.running = False
         self._text_cache = ""
+        self.sentence_boundary_idle.set()
+        self.word_boundary_idle.set()
         self.text_queue.put(None)
         self.audio_queue.put(None)
         self.boundary_queue.put(None)
