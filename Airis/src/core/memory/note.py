@@ -11,7 +11,7 @@ class NoteManager:
         self.config = ConfigManager()
         self.websocket_url = self.config.get_json("system.websocket_url")
         self.max_char = int(self.config.get_json("memory.note.max_char", 128))
-        self.file_path = self.config.get_json("memory.note.path")
+        self.file_path = self.config.get_path("memory.note.path")
         threading.Thread(
             target=lambda: asyncio.run(self._init()),
             daemon=True
