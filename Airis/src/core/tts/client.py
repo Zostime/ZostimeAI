@@ -5,7 +5,9 @@ import threading
 import queue
 import re
 import time
+import html
 from typing import Callable, Optional
+import textwrap
 
 from ..common.config import ConfigManager
 from ..common.logger import LogManager
@@ -58,6 +60,7 @@ class TTSClient:
         self.interrupt_audio = threading.Event()
 
         self._text_cache = ""
+        self._ssml_pending_text = ""
         self.sentence_boundary_idle = threading.Event()
         self.sentence_boundary_idle.set()
         self.word_boundary_idle = threading.Event()
@@ -259,6 +262,119 @@ class TTSClient:
                     continue
                 break
 
+    def sanitize_ssml_fragment(self, raw: str) -> str:
+        raw = re.sub(r'</?speak[^>]*>', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'</?voice[^>]*>', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'```[a-zA-Z]*', '', raw)
+        raw = re.sub(r'[\s\u200B-\u200D\uFEFF]+', ' ', raw, flags=re.UNICODE)
+        raw = re.sub(r' {2,}', ' ', raw).strip()
+        return raw
+    
+    @staticmethod
+    def _find_ssml_tag_end(text: str, start: int):
+        quote = None
+        for index in range(start + 1, len(text)):
+            char = text[index]
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in ("'", '"'):
+                quote = char
+            elif char == ">":
+                return index
+        return None
+
+    @classmethod
+    def _scan_ssml_fragment(cls, text: str):
+        stack = []
+        safe_end = 0
+        incomplete_at = None
+        malformed = False
+        index = 0
+
+        while index < len(text):
+            if text[index] != "<":
+                index += 1
+                if not stack:
+                    safe_end = index
+                continue
+
+            if text.startswith("<!--", index):
+                comment_end = text.find("-->", index + 4)
+                if comment_end == -1:
+                    incomplete_at = index
+                    break
+                index = comment_end + 3
+                if not stack:
+                    safe_end = index
+                continue
+
+            tag = re.match(r"</?([A-Za-z_][\w:.-]*)", text[index:])
+            if not tag:
+                if text[index:] in ("<", "</"):
+                    incomplete_at = index
+                    break
+                index += 1
+                if not stack:
+                    safe_end = index
+                continue
+
+            tag_end = cls._find_ssml_tag_end(text, index)
+            if tag_end is None:
+                incomplete_at = index
+                break
+
+            tag_name = tag.group(1)
+            is_closing = text[index + 1] == "/"
+            is_self_closing = text[index:tag_end].rstrip().endswith("/")
+            if is_closing:
+                if not stack or stack[-1] != tag_name:
+                    malformed = True
+                    break
+                stack.pop()
+            elif not is_self_closing:
+                stack.append(tag_name)
+
+            index = tag_end + 1
+            if not stack:
+                safe_end = index
+
+        return safe_end, stack, incomplete_at, malformed
+
+    def _queue_pending_ssml(self):
+        if not self._ssml_pending_text:
+            return
+
+        _, stack, incomplete_at, malformed = self._scan_ssml_fragment(
+            self._ssml_pending_text
+        )
+        pending = self._ssml_pending_text
+        self._ssml_pending_text = ""
+
+        if malformed:
+            self.logger.error(
+                "Malformed SSML fragment; treating it as plain text"
+            )
+            pending = html.escape(pending, quote=False)
+        elif incomplete_at is not None:
+            self.logger.warning(
+                "Incomplete SSML tag at end of stream; escaping the unfinished tag"
+            )
+            pending = (
+                pending[:incomplete_at]
+                + "".join(f"</{tag_name}>" for tag_name in reversed(stack))
+                + html.escape(pending[incomplete_at:], quote=False)
+            )
+        elif stack:
+            self.logger.warning(
+                "Unclosed SSML elements at end of stream; closing them automatically"
+            )
+            pending += "".join(
+                f"</{tag_name}>" for tag_name in reversed(stack)
+            )
+
+        self.text_queue.put(pending)
+
     def _synth_worker(self):
         while self.running: # noqa
             try:
@@ -289,15 +405,15 @@ class TTSClient:
             with self._sentence_end_lock:
                 self._sentence_end_sent = False
 
-            ssml_string = f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{self.lang}">
+            ssml_string = textwrap.dedent(f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{self.lang}">
                 <voice name="{self.voice}">
                     <prosody pitch="{self.pitch}" rate="{self.rate}" volume="{self.volume}">
-                        {text}
+                        {self.sanitize_ssml_fragment(text)}
                     </prosody>
                 </voice>
             </speak>
-            """
+            """)
             try:
                 self.synthesizer.speak_ssml_async(ssml_string)
             except Exception as e:
@@ -311,14 +427,19 @@ class TTSClient:
             return
         self._text_cache += text
         self._has_pending_text = self._has_pending_text or bool(text.strip())
-        self.text_queue.put(text)
+        self._ssml_pending_text += text
+        safe_end, _, _, _ = self._scan_ssml_fragment(self._ssml_pending_text)
+        if safe_end:
+            self.text_queue.put(self._ssml_pending_text[:safe_end])
+            self._ssml_pending_text = self._ssml_pending_text[safe_end:]
 
     def finished(self):
         if not self.running:
             return
-        if not self._has_pending_text:
+        if not self._has_pending_text and not self._ssml_pending_text:
             return
         self._has_pending_text = False
+        self._queue_pending_ssml()
         self._text_cache += '\0'
         self.player_idle.clear()
         self.text_queue.put(self.finish_marker)
@@ -331,6 +452,7 @@ class TTSClient:
         )
         self.stop_requested = True
         self._text_cache = ""
+        self._ssml_pending_text = ""
         self._has_pending_text = False
         with self._playback_state_lock:
             self._is_playing = False

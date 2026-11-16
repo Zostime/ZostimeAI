@@ -4,6 +4,8 @@ import keyboard
 import queue
 import time
 import json
+import sys
+from html.parser import HTMLParser
 
 from src.core.prompts.manager import PromptBuilder
 from src.core.memory.manager import MemoryManager
@@ -385,6 +387,7 @@ class Agent:
         stream_data = {"source": sources[0]}
         if len(sources) > 1:
             stream_data["sources"] = sources
+        response = ""
 
         ProtocolRouter.Runtime.emit(
             event="llm/stream_start",
@@ -428,6 +431,7 @@ class Agent:
                 buffer += chunk
                 if any(ending in buffer for ending in sentence_endings):
                     TTS.feed(buffer)
+                    response += buffer
                     buffer = ""
 
                 ProtocolRouter.Runtime.emit(
@@ -436,7 +440,7 @@ class Agent:
         finally:
             ProtocolRouter.Runtime.emit(
                 event="llm/stream_end",
-                data=stream_data
+                data={"sources": stream_data, "response": response}
             )
 
     def append_assistant_tool_message(self, messages, result, tool_calls):
@@ -535,9 +539,17 @@ def llm_worker():
             AGENT.pending_inputs.put(task)
 
 def tts_worker():
+    text_parts = []
+    parser = HTMLParser(convert_charrefs=True)
+    parser.handle_data = text_parts.append
     while True:
         word = TTS.subtitle_queue.get()
-        OUTPUT.write("stdout", word, end='')
+        OUTPUT.write("stderr", word, end='')
+        parser.feed(word)
+        plain_text = "".join(text_parts)
+        text_parts.clear()
+        if plain_text:
+            OUTPUT.write("stdout", plain_text, end='')
 
 if __name__ == '__main__':
     llm_queue = queue.Queue()
@@ -548,6 +560,7 @@ if __name__ == '__main__':
         
         OUTPUT = OutputManager()
         OUTPUT.register("stdout", enabled=True)
+        OUTPUT.register("stderr", enabled=False, stream=sys.stderr)
 
         LLM = LLMClient()
         TTS = TTSClient(state_callback=emit_tts_state)
