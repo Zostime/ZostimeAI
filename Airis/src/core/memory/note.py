@@ -59,8 +59,16 @@ class NoteManager:
                             False,
                             'error: "mode" 只支持 "append" 或 "overwrite"'
                         )
+                    elif not isinstance(content, str):
+                        await client.send_action_result(
+                            action_id,
+                            False,
+                            'error: "content" 必须是字符串'
+                        )
                     else:
-                        content_length = len(content.encode("utf-8") + self.read()) if mode == "append" else len(content.encode("utf-8"))
+                        existing_content = self.read() if mode == "append" else ""
+                        updated_content = existing_content + content + "\n"
+                        content_length = len(updated_content)
                         if content_length > self.max_char:
                             await client.send_action_result(
                                 action_id,
