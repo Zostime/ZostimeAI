@@ -140,6 +140,7 @@ class InterruptManager:
 
 class Agent:
     def __init__(self):
+        self.memory_filter_ssml = True
         self.pending_inputs = queue.Queue()
         self.last_env = {
             "pending_inputs": list(self.pending_inputs.queue),
@@ -149,6 +150,17 @@ class Agent:
         self.llm_task_lock = threading.Lock()
         
         threading.Thread(target=self.attention, daemon=True).start()
+
+    def filter_memory_content(self, content: str) -> str:
+        filtered_content = content
+        if self.memory_filter_ssml:
+            text_parts = []
+            parser = HTMLParser(convert_charrefs=True)
+            parser.handle_data = text_parts.append
+            parser.feed(content)
+            parser.close()
+            filtered_content = "".join(text_parts)
+        return filtered_content
 
     def main(self, tasks):
         """接受 tasks 并处理 LLM + func_call 请求"""
@@ -420,7 +432,10 @@ class Agent:
                         if persistent_tasks:
                             if len(persistent_tasks) == len(tasks):
                                 MEMORY.add_memory(
-                                    result["full_content"], user_id="Airis"
+                                    self.filter_memory_content(
+                                        result["full_content"]
+                                    ),
+                                    user_id="Airis"
                                 )
                             for task in persistent_tasks:
                                 MEMORY.add_memory(
