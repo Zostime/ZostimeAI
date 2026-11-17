@@ -42,8 +42,8 @@
         "src/core/prompts/memory.md",
         "src/core/prompts/runtime_state.md"
       ],
-      "attention": [
-        "src/core/prompts/attention.md"
+      "environmental_assessment": [
+        "src/core/prompts/environmental_assessment.md"
       ]
     }
   },

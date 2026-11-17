@@ -149,7 +149,7 @@ class Agent:
 
         self.llm_task_lock = threading.Lock()
         
-        threading.Thread(target=self.attention, daemon=True).start()
+        threading.Thread(target=self.environmental_assessment, daemon=True).start()
 
     def filter_memory_content(self, content: str) -> str:
         filtered_content = content
@@ -209,8 +209,8 @@ class Agent:
                 finally:
                     STATE.agent.idle = True
 
-    def attention(self):
-        """积累 env 数据, Main LLM 处于空闲时 由 Attention LLM 判断是否触发 Main LLM"""
+    def environmental_assessment(self):
+        """积累 env 数据, Main LLM 处于空闲时 由 Environmental Assessment LLM 判断是否触发 Main LLM"""
         while True:
             env = {
                 "pending_inputs": list(self.pending_inputs.queue),
@@ -228,8 +228,8 @@ class Agent:
                         {
                             "role": "system", 
                             "content": PROMPT.build(
-                             profile="attention", 
-                             context={"attention.md": {}}
+                             profile="environmental_assessment", 
+                             context={"environmental_assessment.md": {}}
                             )
                         },
                         {
@@ -520,7 +520,7 @@ def llm_worker():
         if task is None:
             break
         
-        if task['type'] == "force_action":  # 不经过 Attention LLM
+        if task['type'] == "force_action":  # 不经过 Environmental Assessment LLM
             priority = task['priority']
 
             tasks = []  # tasks 组装
