@@ -1,33 +1,25 @@
-import azure.cognitiveservices.speech as speechsdk # noqa
-import sounddevice as sd
-import numpy as np
-import threading
+import html
 import queue
 import re
+import threading
 import time
-import html
 from typing import Callable, Optional
-import textwrap
+import numpy as np
+import sounddevice as sd
 
 from ..common.config import ConfigManager
 from ..common.logger import LogManager
+from .providers.base import ProviderCallbacks, TTSProvider, WordBoundaryEvent
+from .providers.factory import create_provider
 
-class TTSClient:
+
+class TTSClient(ProviderCallbacks):
     SENTENCE_END = object()
 
     def __init__(self, state_callback: Optional[Callable[[str], None]] = None):
         self.state_callback = state_callback
         self.config = ConfigManager()
         self.logger = LogManager("tts").get_logger()
-
-        self.voice = self.config.get_json("tts.voice")
-        self.lang = self.config.get_json("tts.lang")
-        self.pitch = self.config.get_json("tts.pitch")
-        self.rate = self.config.get_json("tts.rate")
-        self.volume = self.config.get_json("tts.volume")
-
-        self.speech_key = self.config.get_env("TTS_SPEECH_KEY")
-        self.service_region = self.config.get_env("TTS_SERVICE_REGION")
 
         self.running = True
         self.text_queue = queue.Queue()
@@ -51,8 +43,9 @@ class TTSClient:
         self._sentence_end_lock = threading.Lock()
 
         self.p = None
-        self.player: sd.OutputStream = None
-        self.synthesizer = None
+        self.player: Optional[sd.OutputStream] = None
+        self.provider: Optional[TTSProvider] = None
+        self.sample_rate = 24000
 
         self.synthesis_idle = threading.Event()
         self.synthesis_idle.set()
@@ -71,27 +64,11 @@ class TTSClient:
         self._init()
 
     def _init(self):
-        speech_config = speechsdk.SpeechConfig(
-            subscription=self.speech_key, region=self.service_region
-        )
-        speech_config.speech_synthesis_voice_name = self.voice
-        speech_config.set_speech_synthesis_output_format(
-            speechsdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm
-        )
-        speech_config.set_property(
-            property_id=speechsdk.PropertyId.SpeechServiceResponse_RequestWordBoundary,
-            value="true"
-        )
-        self.synthesizer = speechsdk.SpeechSynthesizer(
-            speech_config=speech_config, audio_config=None
-        )
-        self.synthesizer.synthesis_word_boundary.connect(self._on_word_boundary)
-        self.synthesizer.synthesizing.connect(self._on_synthesizing)
-        self.synthesizer.synthesis_completed.connect(self._on_synthesis_completed)
-        self.synthesizer.synthesis_canceled.connect(self._on_synthesis_canceled)
+        self.provider = create_provider(self, self.config)
+        self.sample_rate = self.provider.sample_rate
 
         self.player = sd.OutputStream(
-            samplerate=24000,
+            samplerate=self.sample_rate,
             channels=1,
             dtype='int16'
         )
@@ -104,12 +81,32 @@ class TTSClient:
         self.synth_thread.start()
         self.subtitle_thread.start()
 
-    def _on_word_boundary(self, evt):
+    # Provider Callbacks
+
+    def on_audio(self, data: bytes) -> None:
+        self.audio_queue.put(data)
+
+    def on_word_boundary(self, event: WordBoundaryEvent) -> None:
         self.word_boundary_idle.clear()
-        self.boundary_queue.put_nowait(evt)
+        self.boundary_queue.put_nowait(event)
+
+    def on_completed(self) -> None:
+        self._send_sentence_end()
+        self.audio_queue.put(self.sentence_playback_end_marker)
+        self.synthesis_idle.set()
+
+    def on_canceled(self, error_details: str = "", is_error: bool = False) -> None:
+        self._send_sentence_end()
+        self.audio_queue.put(self.sentence_playback_end_marker)
+        self.synthesis_idle.set()
+        if is_error:
+            self.logger.error(f"Error details: {error_details}")
+
+    def on_error(self, message: str) -> None:
+        self.logger.error(message)
 
     def _subtitle_worker(self):
-        while self.running: # noqa
+        while self.running:  # noqa
             try:
                 base_frame = self.base_frame_queue.get(timeout=0.1)
             except queue.Empty:
@@ -133,7 +130,7 @@ class TTSClient:
                 if not text:
                     continue
 
-                offset_frames = round(evt.audio_offset * 24000 / 10_000_000)
+                offset_frames = round(evt.audio_offset_seconds * self.sample_rate)
                 target_frame = base_frame + offset_frames
 
                 while self.running and not self.interrupt_audio.is_set():
@@ -146,7 +143,6 @@ class TTSClient:
                             self._text_cache = self._text_cache[index + len(text):]
                             self.subtitle_queue.put(subtitle_chunk)
 
-                            # Drop the end-of-turn marker after the final spoken word.
                             filtered_text_cache = re.sub(
                                 pattern=r'\s',
                                 repl='',
@@ -158,14 +154,6 @@ class TTSClient:
                                     self._text_cache = self._text_cache[filtered_index + 1:]
                         self.word_boundary_idle.set()
                         break
-
-    def _on_synthesizing(self, evt):
-        try:
-            data = evt.result.audio_data
-            if data:
-                self.audio_queue.put(data)
-        except Exception as e:
-            self.logger.error(f"Error in synthesizing callback: {e}")
 
     def _send_sentence_end(self):
         with self._sentence_end_lock:
@@ -194,19 +182,6 @@ class TTSClient:
         self.player_idle.set()
         if was_playing:
             self._emit_state(state)
-
-    def _on_synthesis_completed(self, evt): # noqa
-        self._send_sentence_end()
-        self.audio_queue.put(self.sentence_playback_end_marker)
-        self.synthesis_idle.set()
-
-    def _on_synthesis_canceled(self, evt):
-        self._send_sentence_end()
-        self.audio_queue.put(self.sentence_playback_end_marker)
-        self.synthesis_idle.set()
-        cancellation_details = evt.result.cancellation_details
-        if cancellation_details.reason == speechsdk.CancellationReason.Error:
-            self.logger.error(f"Error details: {cancellation_details.error_details}")
 
     def _player_worker(self):
         while self.running:
@@ -262,14 +237,6 @@ class TTSClient:
                     continue
                 break
 
-    def sanitize_ssml_fragment(self, raw: str) -> str:
-        raw = re.sub(r'</?speak[^>]*>', '', raw, flags=re.IGNORECASE)
-        raw = re.sub(r'</?voice[^>]*>', '', raw, flags=re.IGNORECASE)
-        raw = re.sub(r'```[a-zA-Z]*', '', raw)
-        raw = re.sub(r'[\s\u200B-\u200D\uFEFF]+', ' ', raw, flags=re.UNICODE)
-        raw = re.sub(r' {2,}', ' ', raw).strip()
-        return raw
-    
     @staticmethod
     def _find_ssml_tag_end(text: str, start: int):
         quote = None
@@ -376,7 +343,7 @@ class TTSClient:
         self.text_queue.put(pending)
 
     def _synth_worker(self):
-        while self.running: # noqa
+        while self.running:  # noqa
             try:
                 text = self.text_queue.get()
             except queue.Empty:
@@ -405,17 +372,8 @@ class TTSClient:
             with self._sentence_end_lock:
                 self._sentence_end_sent = False
 
-            ssml_string = textwrap.dedent(f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{self.lang}">
-                <voice name="{self.voice}">
-                    <prosody pitch="{self.pitch}" rate="{self.rate}" volume="{self.volume}">
-                        {self.sanitize_ssml_fragment(text)}
-                    </prosody>
-                </voice>
-            </speak>
-            """)
             try:
-                self.synthesizer.speak_ssml_async(ssml_string)
+                self.provider.synthesize(text)
             except Exception as e:
                 self.logger.error(f"Synthesis start error: {e}")
                 self._send_sentence_end()
@@ -462,10 +420,9 @@ class TTSClient:
         self.interrupt_audio.set()
         if was_active:
             self._emit_state("interrupt")
-        try:
-            self.synthesizer.stop_speaking_async().get()
-        except Exception as e:
-            self.logger.error(f"Error stopping synthesis: {e}")
+
+        if self.provider is not None:
+            self.provider.stop()
 
         player_ready = True
         if self.player:
@@ -528,6 +485,9 @@ class TTSClient:
             self.player_thread.join(timeout=2.0)
         if hasattr(self, 'subtitle_thread') and self.subtitle_thread.is_alive():
             self.subtitle_thread.join(timeout=2.0)
+
+        if self.provider is not None:
+            self.provider.close()
 
         if self.player:
             self.player.stop()

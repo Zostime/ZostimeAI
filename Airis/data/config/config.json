@@ -11,6 +11,7 @@
     "tool_choice": "auto"
   },
   "tts": {
+    "provider": "azure",
     "voice": "zh-CN-XiaoyiNeural",
     "lang": "zh-CN",
     "pitch": "+5%",
