@@ -1,11 +1,11 @@
 import textwrap
 import azure.cognitiveservices.speech as speechsdk
+import re
 
 from .base import (
     ProviderCallbacks,
     TTSProvider,
-    WordBoundaryEvent,
-    sanitize_ssml_fragment,
+    WordBoundaryEvent
 )
 
 
@@ -93,9 +93,18 @@ class AzureTTSProvider(TTSProvider):
             is_error=is_error,
         )
 
+    def sanitize_ssml_fragment(raw: str) -> str:
+        """清理输入中的 SSML 包装, 代码块标记和多余空白"""
+        raw = re.sub(r'</?speak[^>]*>', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'</?voice[^>]*>', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'```[a-zA-Z]*', '', raw)
+        raw = re.sub(r'[\s\u200B-\u200D\uFEFF]+', ' ', raw, flags=re.UNICODE)
+        raw = re.sub(r' {2,}', ' ', raw).strip()
+        return raw
+
     # TTSProvider
     def synthesize(self, ssml_fragment: str) -> None:
-        body = sanitize_ssml_fragment(ssml_fragment)
+        body = self.sanitize_ssml_fragment(ssml_fragment)
         ssml_string = textwrap.dedent(f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{self.lang}">
             <voice name="{self.voice}">

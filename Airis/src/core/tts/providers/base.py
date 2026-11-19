@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import re
 
 
 class WordBoundaryEvent:
@@ -57,13 +56,3 @@ class TTSProvider(ABC):
     @abstractmethod
     def close(self) -> None:
         """释放底层资源"""
-
-
-def sanitize_ssml_fragment(raw: str) -> str:
-    """清理输入中的 SSML 包装, 代码块标记和多余空白"""
-    raw = re.sub(r'</?speak[^>]*>', '', raw, flags=re.IGNORECASE)
-    raw = re.sub(r'</?voice[^>]*>', '', raw, flags=re.IGNORECASE)
-    raw = re.sub(r'```[a-zA-Z]*', '', raw)
-    raw = re.sub(r'[\s\u200B-\u200D\uFEFF]+', ' ', raw, flags=re.UNICODE)
-    raw = re.sub(r' {2,}', ' ', raw).strip()
-    return raw
