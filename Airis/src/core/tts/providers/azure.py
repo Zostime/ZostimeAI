@@ -93,7 +93,7 @@ class AzureTTSProvider(TTSProvider):
             is_error=is_error,
         )
 
-    def sanitize_ssml_fragment(raw: str) -> str:
+    def sanitize_ssml_fragment(self, raw: str) -> str:
         """清理输入中的 SSML 包装, 代码块标记和多余空白"""
         raw = re.sub(r'</?speak[^>]*>', '', raw, flags=re.IGNORECASE)
         raw = re.sub(r'</?voice[^>]*>', '', raw, flags=re.IGNORECASE)
