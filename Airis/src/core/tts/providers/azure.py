@@ -10,6 +10,20 @@ from .base import (
 
 
 class AzureTTSProvider(TTSProvider):
+    """
+    config.tts:
+        provider: "azure"
+        voice:    ""       # https://learn.microsoft.com/azure/ai-services/speech-service/language-support?tabs=tts
+        lang:     ""       # voice 与 lang 同时设置时 lang 被忽略
+        pitch:    "+0Hz"   # 格式 [+-]\\d+(Hz|%) 或命名级别 x-low/low/medium/high/x-high
+        rate:     "+0%"    # 格式 [+-]\\d+% 或命名级别 x-slow/slow/medium/fast/x-fast
+        volume:   "+0%"    # 格式 [+-]\\d+% 或 0.0–100.0 绝对值
+
+    runtime 依赖:
+        - azure-cognitiveservices-speech Python 包
+        - 环境变量 $TTS_SPEECH_KEY / $TTS_SERVICE_REGION
+    """
+
     OUTPUT_SAMPLE_RATE = 24000
 
     def __init__(self, callbacks: ProviderCallbacks, config) -> None:
