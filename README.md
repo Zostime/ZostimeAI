@@ -12,75 +12,77 @@
 ZostimeAI/
 ├─Airis/
 │   ├─src/
-│   │   ├─__init__.py     
-│   │   ├─runtime.py                # Global subsystem
+│   │   ├─__init__.py
 │   │   ├─gateway.py                # WebSocket protocol gateway
 │   │   ├─state.py                  # Runtime state
 │   │   ├─event_bus.py              # Priority Scheduling Event Bus
+│   │   ├─output.py                 # Output channels
 │   │   └─core/                     # Core
-│   │       ├─__init__.py      
+│   │       ├─__init__.py
 │   │       ├─common/               # Public module
-│   │       │  ├─__init__.py        
-│   │       │  ├─config.py          
-│   │       │  └─logger.py          
+│   │       │   ├─__init__.py
+│   │       │   ├─config.py
+│   │       │   └─logger.py
 │   │       ├─llm/                  # LLM module
-│   │       │   ├─__init__.py   
-│   │       │   └─client.py     
+│   │       │   ├─__init__.py
+│   │       │   └─client.py
 │   │       ├─prompts/              # PROMPTS module
-│   │       │   ├─init.py   
+│   │       │   ├─__init__.py
+│   │       │   ├─manager.py
 │   │       │   ├─system.md         # system prompt
 │   │       │   ├─personality.md    # personality prompt
 │   │       │   ├─memory.md         # memory prompt
 │   │       │   ├─runtime_state.md  # runtime state prompt
-│   │       │   └─builder.py        # prompts builder
+│   │       │   └─environmental_assessment.md
 │   │       ├─tts/                  # TTS module
-│   │       │   ├─__init__.py    
-│   │       │   └─client.py      
+│   │       │   ├─__init__.py
+│   │       │   ├─client.py
+│   │       │   └─providers/        # TTS providers
+│   │       │       ├─base.py
+│   │       │       └─factory.py
 │   │       ├─stt/                  # STT module
-│   │       │   ├─__init__.py    
-│   │       │   └─client.py      
-│   │       └─memory/               # Memory systrm
-│   │           ├─__init__.py   
-│   │           ├─manager.py        
-│   │           ├─stm.py   
-│   │           └─ltm.py   
-│   ├─data/                         # Data, config and backups
-│   │   ├─models/        
-│   │   ├─cache/          
-│   │   ├─config/         
-│   │   ├─logs/                
-│   │   ├─memories/
-│   │   │   ├─note/       
-│   │   │   └─long_term/   
-│   │   └─backups/
+│   │       │   ├─__init__.py
+│   │       │   └─client.py
+│   │       └─memory/               # Memory system
+│   │           ├─__init__.py
+│   │           ├─manager.py
+│   │           ├─stm.py
+│   │           ├─ltm.py
+│   │           └─note.py
+│   ├─data/                         # Data and configuration
+│   │   └─config/
+│   │       ├─config.json
+│   │       └─.env.example
 │   ├─scripts/                      # Scripts
 │   │   ├─system/
 │   │   │   └─reset_system.py       # Reset System
-│   │   └─backup/   
-│   │       ├─restore.py            # Restore 
+│   │   └─backup/
+│   │       ├─restore.py            # Restore
 │   │       └─backup.py             # Backup
-│   ├─.venv/                        # Python virtual environment
 │   ├─main.py                       # Program entry point
 │   └─requirements.txt              # Project dependencies
 ├─airis-sdk/                        # SDK
-│   ├─python/                       
+│   ├─python/
 │   │   ├─airis_sdk/                # Python package
-│   │   │   ├─__init__.py      
-│   │   │   ├─websocket.py  
-│   │   │   └─devtools/ 
-│   │   │      └─websocket_proxy.py   
-│   │   └─pyproject.toml   
+│   │   │   ├─__init__.py
+│   │   │   ├─websocket.py
+│   │   │   └─devtools/
+│   │   │       └─websocket_proxy.py
+│   │   └─pyproject.toml
 │   └─typescript/                   # Typescript package
 │       ├─src/
 │       │   └─index.ts
 │       ├─dist/
 │       ├─package.json
-│       └─tsconfig.json         
-├─docs/                             # Document
-│   ├─airis-api/    
-│   └─...                       
+│       └─tsconfig.json
+├─docs/                             # Documentation
+│   ├─airis-api/
+│   │   ├─zh-Hans/
+│   │   └─en/
+│   ├─README.md
+│   └─README.zh-CN.md
 └─services/                         # External services
-    └─...  
+    └─...
 ```
 ## Quick Start
 - **Copy [.env.example](Airis/data/config/.env.example) as .env and fill in the actual values**

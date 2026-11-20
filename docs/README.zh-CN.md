@@ -11,39 +11,44 @@
 ```
 ZostimeAI/
 ├─Airis/
-│   ├─src/       
-│   │   ├─__init__.py       
-│   │   ├─runtime.py                # 全局子系统
+│   ├─src/
+│   │   ├─__init__.py
 │   │   ├─gateway.py                # WebSocket协议网关
 │   │   ├─state.py                  # 运行时状态
 │   │   ├─event_bus.py              # 优先级调度事件总线
+│   │   ├─output.py                 # 输出通道
 │   │   └─core/                     # 核心
-│   │       ├─__init__.py     
+│   │       ├─__init__.py
 │   │       ├─common/               # 公共模块
-│   │       │  ├─__init__.py   
-│   │       │  ├─config.py        
-│   │       │  └─logger.py         
+│   │       │   ├─__init__.py
+│   │       │   ├─config.py
+│   │       │   └─logger.py
 │   │       ├─llm/                  # LLM模块
-│   │       │   ├─__init__.py   
-│   │       │   └─client.py     
+│   │       │   ├─__init__.py
+│   │       │   └─client.py
 │   │       ├─prompts/              # PROMPTS模块
-│   │       │   ├─__init__.py 
+│   │       │   ├─__init__.py
+│   │       │   ├─manager.py
 │   │       │   ├─system.md         # 系统prompt
 │   │       │   ├─personality.md    # 人格prompt
 │   │       │   ├─memory.md         # 记忆prompt
 │   │       │   ├─runtime_state.md  # 运行时状态prompt
-│   │       │   └─builder.py        # prompts构建器 
+│   │       │   └─environmental_assessment.md
 │   │       ├─tts/                  # TTS模块
-│   │       │   ├─__init__.py   
-│   │       │   └─client.py     
+│   │       │   ├─__init__.py
+│   │       │   ├─client.py
+│   │       │   └─providers/        # TTS服务商
+│   │       │       ├─base.py
+│   │       │       └─factory.py
 │   │       ├─stt/                  # STT模块
-│   │       │   ├─__init__.py   
-│   │       │   └─client.py     
+│   │       │   ├─__init__.py
+│   │       │   └─client.py
 │   │       └─memory/               # 记忆系统
-│   │           ├─__init__.py  
-│   │           ├─manager.py       
-│   │           ├─stm.py  
-│   │           └─ltm.py  
+│   │           ├─__init__.py
+│   │           ├─manager.py
+│   │           ├─stm.py
+│   │           ├─ltm.py
+│   │           └─note.py
 │   ├─data/                         # 数据、配置和备份
 │   │   ├─models/        
 │   │   ├─cache/          
@@ -59,18 +64,17 @@ ZostimeAI/
 │   │   └─backup/   
 │   │       ├─restore.py            # 加载备份   
 │   │       └─backup.py             # 备份        
-│   ├─.venv/                        # Python虚拟环境
 │   ├─main.py                       # 程序主入口
 │   └─requirements.txt              # 项目依赖
 ├─airis-sdk/                        # SDK
-│   ├─python/                       
+│   ├─python/
 │   │   ├─airis_sdk/                # Python包
 │   │   │   ├─__init__.py      
 │   │   │   ├─websocket.py  
 │   │   │   └─devtools/ 
 │   │   │      └─websocket_proxy.py   
 │   │   └─pyproject.toml   
-│   └─typescript/                   # Typescript包
+│   └─typescript/                   # TypeScript包
 │       ├─src/
 │       │   └─index.ts
 │       ├─dist/
@@ -78,9 +82,12 @@ ZostimeAI/
 │       └─tsconfig.json 
 ├─docs/                             # 文档
 │   ├─airis-api/
-│   └─... 
+│   │   ├─zh-Hans/
+│   │   └─en/
+│   ├─README.md
+│   └─README.zh-CN.md
 └─services/                         # 外部服务
-    └─...        
+    └─... 
 ```
 ## 快速开始
 - **复制 [.env.example](../Airis/data/config/.env.example) 为 .env 后填充真实值**
