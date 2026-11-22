@@ -1,9 +1,14 @@
+import threading
+
+
 class State:
     class Agent:
         def __init__(self):
             self.memory: str = "无相关记忆"
             self.idle: bool = True
             self.unread_events: list = []
+            self.response_events: list = []
+            self.context_lock = threading.Lock()
 
     class Env:
         def __init__(self):

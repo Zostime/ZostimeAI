@@ -53,7 +53,14 @@ class EventHandlers:
                 return
 
         INTERRUPT.clear()
-        STATE.agent.memory = AGENT.build_memory_context(data['content'])
+        STATE.agent.memory = AGENT.build_memory_context(
+            data['content'],
+            source=(
+                data["source"]
+                if data.get("type") == "force_action"
+                else None
+            ),
+        )
 
         STATE.env.input = {
             "type": data['type'],
@@ -73,6 +80,7 @@ class EventHandlers:
         if data['type'] == "force_action":
             task["session_id"] = data["session_id"]
             task["action_names"] = data.get("action_names", [])
+            task["state"] = data.get("state", "")
         llm_queue.put(task)
 
     # noinspection PyUnusedLocal
@@ -144,7 +152,7 @@ class Agent:
         self.pending_inputs = queue.Queue()
         self.last_env = {
             "pending_inputs": list(self.pending_inputs.queue),
-            "unread_events": STATE.agent.unread_events.copy()
+            "response_events": [],
         }
 
         self.llm_task_lock = threading.Lock()
@@ -169,11 +177,21 @@ class Agent:
                 tasks = [tasks]
 
             STATE.agent.idle = False
+            with STATE.agent.context_lock:
+                context_events = STATE.agent.unread_events.copy()
+                response_events = STATE.agent.response_events.copy()
             try:
-                messages = self.build_conversation_messages(tasks)
+                messages = self.build_conversation_messages(tasks, context_events)
                 force_action_pending = any(
                     task.get("type") == "force_action" for task in tasks
                 )
+                force_action_sessions = {
+                    task.get("session_id")
+                    for task in tasks
+                    if task.get("type") == "force_action"
+                    and task.get("session_id") is not None
+                }
+                persisted_force_sessions = set()
                 while True:
                     tools, tool_map, tool_choice = self.collect_tools(
                         tasks, force_action_pending
@@ -187,8 +205,22 @@ class Agent:
                         break
 
                     self.append_assistant_tool_message(messages, result, tool_calls)
-                    if self.execute_tool_calls(tool_calls, tool_map, messages):
+                    successful_sessions = self.execute_tool_calls(
+                        tool_calls, tool_map, messages
+                    )
+                    successful_force_sessions = (
+                        successful_sessions & force_action_sessions
+                    )
+                    if successful_force_sessions:
                         force_action_pending = False
+                        new_force_sessions = (
+                            successful_force_sessions - persisted_force_sessions
+                        )
+                        if new_force_sessions:
+                            self.persist_force_action_context(
+                                tasks, new_force_sessions
+                            )
+                            persisted_force_sessions.update(new_force_sessions)
 
                     if INTERRUPT.is_interrupted():
                         break
@@ -203,7 +235,9 @@ class Agent:
             finally:
                 STATE.env.is_speaking = False
                 try:
-                    STATE.agent.unread_events.clear()
+                    with STATE.agent.context_lock:
+                        del STATE.agent.unread_events[:len(context_events)]
+                        del STATE.agent.response_events[:len(response_events)]
                     TTS.finished()
                     TTS.player_idle.wait()
                 finally:
@@ -212,9 +246,11 @@ class Agent:
     def environmental_assessment(self):
         """积累 env 数据, Main LLM 处于空闲时 由 Environmental Assessment LLM 判断是否触发 Main LLM"""
         while True:
+            with STATE.agent.context_lock:
+                response_events = STATE.agent.response_events.copy()
             env = {
                 "pending_inputs": list(self.pending_inputs.queue),
-                "unread_events": STATE.agent.unread_events.copy()
+                "response_events": response_events,
             }
 
             env_changed = (env != self.last_env)
@@ -266,20 +302,31 @@ class Agent:
                 self.main(tasks)
                 self.last_env = {
                     "pending_inputs": [],
-                    "unread_events": [],
+                    "response_events": [],
                 }
             else:
                 time.sleep(0.1)
 
-    def build_memory_context(self, user_input) -> str:
+    @staticmethod
+    def game_memory_id(game_name: str) -> str:
+        return f"game:{game_name}"
+
+    def build_memory_context(self, user_input, source=None) -> str:
         user_ltm = MEMORY.search_ltm(user_input, USER)  # [{'memory': str, 'score': datetime}, ...]
         assistant_ltm = MEMORY.search_ltm(user_input, 'Airis')
+        game_ltm = []
+        if source is not None:
+            game_ltm = MEMORY.search_ltm(
+                user_input,
+                self.game_memory_id(source),
+            )
 
         note = MEMORY.note.read()
 
         # LTM排序(相关性高在前)
         user_ltm = sorted(user_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
         assistant_ltm = sorted(assistant_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
+        game_ltm = sorted(game_ltm, key=lambda x: x.get("score", 0.5), reverse=True)
 
         parts = ["[记忆上下文]"]
 
@@ -297,6 +344,13 @@ class Agent:
                 score = entry.get("score")
                 parts.append(f"- [{score:.2f}] {memory}")
 
+        if game_ltm:
+            parts.append(f"\n来自{source}的长期记忆:")
+            for entry in game_ltm:
+                memory = entry.get("memory")
+                score = entry.get("score")
+                parts.append(f"- [{score:.2f}] {memory}")
+
         if note:
             parts.append("\nNOTE:")
             parts.append(note)
@@ -306,7 +360,11 @@ class Agent:
 
         return "\n".join(parts)
 
-    def build_conversation_messages(self, tasks):
+    def build_conversation_messages(self, tasks, context_events=None):
+        if context_events is None:
+            with STATE.agent.context_lock:
+                context_events = STATE.agent.unread_events.copy()
+
         system_prompt = PROMPT.build(profile="main", context={
             "system.md": {},
             "personality.md": {},
@@ -315,7 +373,7 @@ class Agent:
             },
             "runtime_state.md": {
                 "current_time": datetime.datetime.now(),
-                "unread_events": STATE.agent.unread_events,
+                "unread_events": context_events,
             }
         })
 
@@ -338,13 +396,54 @@ class Agent:
                 {"role": "assistant", "content": assistant_entry["memory"]}
             ])
 
+        game_sources = dict.fromkeys(
+            task["source"]
+            for task in tasks
+            if task.get("type") == "force_action"
+            and task.get("source") is not None
+        )
+        for source in game_sources:
+            game_stm = MEMORY.search_stm(self.game_memory_id(source))
+            game_entries = sorted(
+                game_stm,
+                key=lambda item: item.get("timestamp", 0),
+            )
+            for entry in game_entries:
+                messages.append({
+                    "role": "user",
+                    "name": source,
+                    "content": entry["memory"],
+                })
+
         for task in tasks:
+            content = task["content"]
+            if task.get("type") == "force_action" and task.get("state"):
+                content = f"游戏状态:\n{task['state']}\n\n动作要求:\n{content}"
             messages.append({
                 "role": "user",
                 "name": task["source"],
-                "content": task["content"]
+                "content": content,
             })
         return messages
+
+    def persist_force_action_context(self, tasks, session_ids):
+        for task in tasks:
+            if (
+                task.get("type") != "force_action"
+                or task.get("session_id") not in session_ids
+                or task.get("ephemeral_context", False)
+            ):
+                continue
+
+            memory = (
+                f"已完成来自{task['source']}的强制动作请求。\n"
+                f"游戏状态:\n{task.get('state', '')}\n"
+                f"动作要求:\n{task['content']}"
+            )
+            MEMORY.add_memory(
+                memory,
+                user_id=self.game_memory_id(task["source"]),
+            )
 
     def collect_tools(self, tasks, force_action_pending):
         tools = []
@@ -427,7 +526,7 @@ class Agent:
                     if not result.get("tool_calls"):
                         persistent_tasks = [
                             task for task in tasks
-                            if not task["ephemeral_context"]
+                            if not task.get("ephemeral_context", False)
                         ]
                         if persistent_tasks:
                             if len(persistent_tasks) == len(tasks):
@@ -438,9 +537,11 @@ class Agent:
                                     user_id="Airis"
                                 )
                             for task in persistent_tasks:
-                                MEMORY.add_memory(
-                                    task["content"], user_id=task["source"]
-                                )
+                                if task.get("type") != "force_action":
+                                    MEMORY.add_memory(
+                                        task["content"],
+                                        user_id=task["source"],
+                                    )
                     return result
 
                 buffer += chunk
@@ -476,13 +577,35 @@ class Agent:
         })
 
     def execute_tool_calls(self, tool_calls, tool_map, messages):
-        action_succeeded = False
+        successful_sessions = set()
         for tool_call in tool_calls:
             if INTERRUPT.is_interrupted():
                 break
 
             try:
-                session, real_name = tool_map[tool_call["name"]]
+                tool_name = tool_call["name"]
+                mapped_action = tool_map.get(tool_name)
+                if mapped_action is None:
+                    matches = [
+                        action
+                        for action in tool_map.values()
+                        if action[1] == tool_name
+                    ]
+                    if len(matches) == 1:
+                        LOGGER.logger.warning(
+                            f"LLM returned unqualified action name {tool_name!r}; "
+                            "using its unique registered session"
+                        )
+                        mapped_action = matches[0]
+                    elif matches:
+                        raise ValueError(
+                            f"Action name {tool_name!r} is ambiguous across "
+                            "multiple sessions"
+                        )
+                    else:
+                        raise KeyError(f"Action name {tool_name!r} is not registered")
+
+                session, real_name = mapped_action
                 result = ProtocolRouter.Game.run_action(
                     session=session,
                     data={
@@ -496,9 +619,8 @@ class Agent:
                 )
 
                 if result.get("success"):
-                    action_succeeded = True
+                    successful_sessions.add(session.client_id)
                     session.forced_action_names.clear()
-                    session.force_payload = None
                 output = result.get("message", "")
             except Exception as error:
                 output = f"工具执行失败: {error}"
@@ -512,7 +634,7 @@ class Agent:
                 event="llm/tool_call",
                 data={"name": tool_call["name"]}
             )
-        return action_succeeded
+        return successful_sessions
 
 def llm_worker():
     while True:
