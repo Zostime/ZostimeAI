@@ -31,6 +31,16 @@ def event_handler(event, data, meta):
         if event[1] == "start":
             print(f"TTS started: {data}")
 
+    if event[0] == "websocket":
+        if event[1] == "connected":
+            pass
+        if event[1] == "message":
+            direction = data.get("direction") if isinstance(data, dict) else "?"
+            arrow = f"[{direction}]"
+            print(f"{arrow} {data.get('path')}: {data.get('message')}")
+        if event[1] == "disconnected":
+            pass
+
     if event[0] == "debug":
         if event[1] == "info":
             print(f"[DEBUG] info: {data}, t={meta}",)

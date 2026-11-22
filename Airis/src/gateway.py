@@ -8,6 +8,42 @@ import asyncio
 import json
 import time
 
+
+def _expand_json_strings(value):
+    if isinstance(value, dict):
+        return {key: _expand_json_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_json_strings(item) for item in value]
+    if isinstance(value, str):
+        try:
+            return _expand_json_strings(json.loads(value))
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
+def _decode_websocket_message(message):
+    if isinstance(message, bytes):
+        try:
+            message = message.decode("utf-8")
+        except UnicodeDecodeError:
+            return repr(message)
+    if not isinstance(message, str):
+        return repr(message)
+
+    try:
+        decoded = json.loads(message)
+    except json.JSONDecodeError:
+        if r"\u" not in message:
+            return message
+        try:
+            decoded = json.loads('"' + message.replace('"', '\\"') + '"')
+        except json.JSONDecodeError:
+            return message
+
+    return json.dumps(_expand_json_strings(decoded), ensure_ascii=False)
+
+
 class WebSocketServer:
     def __init__(self, config, logger):
         self.config = config
@@ -74,8 +110,32 @@ class WebSocketServer:
             for ws in targets:
                 try:
                     await ws.send(msg)
-                except:  # noqa
-                    pass
+                except websockets.ConnectionClosed:
+                    self.logger.debug(f"[websocket] {id(ws)} -> {path} connection closed.")
+                    continue
+                except Exception as error:
+                    self.logger.warning(
+                        f"[websocket] Failed to send to {id(ws)} -> {path}: {error}",
+                        exc_info=True,
+                    )
+                    continue
+
+                if path != "runtime":
+                    try:
+                        ProtocolRouter.Runtime.emit(
+                            event="websocket/message",
+                            data={
+                                "path": path,
+                                "direction": "S2C",
+                                "client_id": id(ws),
+                                "message": _decode_websocket_message(msg),
+                            },
+                        )
+                    except Exception as error:
+                        self.logger.warning(
+                            f"[websocket] Failed to report {id(ws)} -> {path}: {error}",
+                            exc_info=True,
+                        )
 
 class ProtocolRouter:
     ws = None
@@ -139,9 +199,22 @@ class ProtocolRouter:
         async def handle(websocket: WebSocketServerProtocol, client_id: int):
             session = ProtocolRouter.Game.Session(client_id, websocket)
             ProtocolRouter.Game.sessions[client_id] = session
+            ProtocolRouter.Runtime.emit(
+                event="websocket/connected",
+                data={"path": "game", "client_id": client_id},
+            )
 
             try:
                 async for raw_msg in websocket:
+                    ProtocolRouter.Runtime.emit(
+                        event="websocket/message",
+                        data={
+                            "path": "game",
+                            "direction": "C2S",
+                            "client_id": client_id,
+                            "message": _decode_websocket_message(raw_msg),
+                        },
+                    )
                     try:
                         data = json.loads(raw_msg)
                     except json.JSONDecodeError:
@@ -152,6 +225,10 @@ class ProtocolRouter:
                 pass
             finally:
                 ProtocolRouter.Game.sessions.pop(client_id, None)
+                ProtocolRouter.Runtime.emit(
+                    event="websocket/disconnected",
+                    data={"path": "game", "client_id": client_id},
+                )
 
         @staticmethod
         async def _handle_message(session, message):
