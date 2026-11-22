@@ -1,9 +1,28 @@
 import websockets
 import asyncio
 import json
+import time
+from typing import Any, Optional
+
+
+GATEWAY_URL = "ws://localhost:8000"
+RUNTIME_URL = f"{GATEWAY_URL.rstrip('/')}/runtime"
+
+
+async def send_runtime_message(event: str, data: dict[str, Any], meta: Optional[dict[str, Any]] = {}) -> None:
+    message = {
+        "event": event,
+        "data": data,
+        "meta": {
+            "timestamp": time.time()
+        } | meta
+    }
+    async with websockets.connect(RUNTIME_URL) as ws:
+        await ws.send(json.dumps(message, ensure_ascii=False))
+
 
 async def system_states():
-    async with websockets.connect("ws://localhost:8000/runtime") as ws:
+    async with websockets.connect(RUNTIME_URL) as ws:
         while True:
             states=json.loads(await ws.recv())
             event = states.get("event").split('/')
@@ -46,4 +65,5 @@ def event_handler(event, data, meta):
             print(f"[DEBUG] info: {data}, t={meta}",)
 
 
-asyncio.run(system_states())
+if __name__ == "__main__":
+    asyncio.run(system_states())

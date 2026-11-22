@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import websockets
 import threading
 import asyncio
+import inspect
 import json
 import time
 
@@ -46,6 +47,7 @@ def _decode_websocket_message(message):
 
 class WebSocketServer:
     def __init__(self, config, logger):
+        self.message_handlers: Dict[str, Any] = {}
         self.config = config
         self.logger = logger
         self.clients = defaultdict(dict)
@@ -65,6 +67,12 @@ class WebSocketServer:
         async with websockets.serve(self._connection_handler, host, port):
             await self._sender_loop()
 
+    def set_message_handler(self, path: str, handler):
+        self.message_handlers[path] = handler
+
+    def get_message_handler(self, path: str):
+        return self.message_handlers.get(path)
+
     async def _connection_handler(self, websocket: WebSocketServerProtocol):
         path = websocket.path.lstrip("/")
         client_id = id(websocket)
@@ -76,8 +84,11 @@ class WebSocketServer:
                 await self.handlers[path](websocket, client_id)
         except websockets.ConnectionClosed:
             self.logger.debug(f"[websocket] {client_id} -> {path} connection closed.")
-        except Exception:  # noqa
-            pass
+        except Exception as error:
+            self.logger.error(
+                f"[websocket] Handler failed for {client_id} -> {path}: {error}",
+                exc_info=True,
+            )
         finally:
             self.clients[path].pop(client_id, None)
 
@@ -162,11 +173,58 @@ class ProtocolRouter:
 
         threading.Thread(target=lambda: asyncio.run(cls.ws.run()), daemon=True).start()
 
+    @classmethod
+    def set_message_handler(cls, path: str, handler):
+        cls.ws.set_message_handler(path, handler)
+
     class Runtime:
         @staticmethod
-        async def handle(websocket: WebSocketServerProtocol, client_id: int):  # noqa
-            async for msg in websocket:
-                ProtocolRouter.logger.debug(f"[websocket] {client_id} -> {msg}")
+        async def handle(websocket: WebSocketServerProtocol, client_id: int):
+            try:
+                async for raw_msg in websocket:
+                    ProtocolRouter.logger.debug(f"[websocket] {client_id} -> {raw_msg}")
+                    ProtocolRouter.Runtime.emit(
+                        event="websocket/message",
+                        data={
+                            "path": "runtime",
+                            "direction": "C2S",
+                            "client_id": client_id,
+                            "message": _decode_websocket_message(raw_msg),
+                        },
+                    )
+
+                    try:
+                        message = json.loads(raw_msg)
+                    except json.JSONDecodeError:
+                        ProtocolRouter.logger.warning(f"Invalid JSON: {raw_msg}")
+                        continue
+
+                    if not isinstance(message, dict):
+                        ProtocolRouter.logger.warning(f"Non-object JSON: {raw_msg}")
+                        continue
+
+                    handler = ProtocolRouter.ws.get_message_handler("runtime")
+                    if handler is None:
+                        ProtocolRouter.logger.error(
+                            "You must set a message_handler for Runtime to handle incoming messages."
+                        )
+                        continue
+
+                    try:
+                        result = handler(client_id, message)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as error:
+                        ProtocolRouter.logger.error(
+                            f"[runtime] handler error: {error}", exc_info=True
+                        )
+
+            except websockets.ConnectionClosed:
+                pass
+            except Exception as error:
+                ProtocolRouter.logger.error(
+                    f"[runtime] handle error: {error}", exc_info=True
+                )
 
         @staticmethod
         def emit(event: str, data: dict[str, Any], meta: Optional[dict[str, Any]] = {}):
@@ -215,11 +273,25 @@ class ProtocolRouter:
                         },
                     )
                     try:
-                        data = json.loads(raw_msg)
+                        message = json.loads(raw_msg)
                     except json.JSONDecodeError:
                         ProtocolRouter.logger.warning(f"Invalid JSON: {raw_msg}")
                         continue
-                    await ProtocolRouter.Game._handle_message(session, data)
+                    handler = ProtocolRouter.ws.get_message_handler("game")
+                    if handler is None:
+                        ProtocolRouter.logger.error(
+                            "You must set a message_handler for Game to handle incoming messages."
+                        )
+                        continue
+
+                    try:
+                        result = handler(client_id, message)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as error:
+                        ProtocolRouter.logger.error(
+                            f"[runtime] handler error: {error}", exc_info=True
+                        )
             except websockets.ConnectionClosed:
                 pass
             finally:
@@ -228,65 +300,6 @@ class ProtocolRouter:
                     event="websocket/disconnected",
                     data={"path": "game", "client_id": client_id},
                 )
-
-        @staticmethod
-        async def _handle_message(session, message):
-            command = message.get("command")
-            data = message.get("data")
-            game = message.get("game")
-
-            if command == "startup":
-                session.game_name = game
-
-            elif command == "context":
-                message = data.get("message", "")
-                silent = data.get("silent", True)
-                context_event = f"来自{game}的msg:{message}"
-                with ProtocolRouter.state.agent.context_lock:
-                    ProtocolRouter.state.agent.unread_events.append(context_event)
-                    if not silent:
-                        ProtocolRouter.state.agent.response_events.append(
-                            f"[应该回复]{context_event}"
-                        )
-
-            elif command == "actions/register":
-                for act in data.get("actions", []):
-                    session.registered_actions[act["name"]] = act
-
-            elif command == "actions/unregister":
-                for name in data.get("action_names", []):
-                    session.registered_actions.pop(name, None)
-
-            elif command == "actions/force":
-                query = data.get("query", "")
-                action_names = data.get("action_names", [])
-                state = data.get("state", "")
-                priority = data.get("priority", "low")
-                ephemeral_context = data.get("ephemeral_context", False)
-
-                session.forced_action_names = list(action_names)
-
-                ProtocolRouter.event_bus.emit(
-                    event_type="input",
-                    data={
-                        "type": "force_action",
-                        "source": game,
-                        "content": query,
-                        "state": state,
-                        "ephemeral_context": ephemeral_context,
-                        "session_id": session.client_id,
-                        "action_names": action_names,
-                    },
-                    priority=priority
-                )  # 触发LLM
-
-            elif command == "action/result":
-                action_id = data.get("id")
-                if not action_id:
-                    return
-                future = session.pending_actions.pop(action_id, None)
-                if future and not future.done():
-                    future.set_result(data)
 
         @staticmethod
         def run_action(session, data):

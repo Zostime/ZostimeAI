@@ -688,6 +688,76 @@ def tts_worker():
         if plain_text:
             OUTPUT.write("stdout", plain_text, end='')
 
+async def game_message_handler(client_id, message):
+    session = ProtocolRouter.Game.sessions.get(client_id)
+    if session is None:
+        ProtocolRouter.logger.warning(
+            f"[game] no session for client {client_id}, drop message"
+        )
+        return
+
+    command = message.get("command")
+    data = message.get("data")
+    game = message.get("game")
+
+    if command == "startup":
+        session.game_name = game
+
+    elif command == "context":
+        message = data.get("message", "")
+        silent = data.get("silent", True)
+        context_event = f"来自{game}的msg:{message}"
+        with ProtocolRouter.state.agent.context_lock:
+            ProtocolRouter.state.agent.unread_events.append(context_event)
+            if not silent:
+                ProtocolRouter.state.agent.response_events.append(
+                    f"[应该回复]{context_event}"
+                )
+
+    elif command == "actions/register":
+        for act in data.get("actions", []):
+            session.registered_actions[act["name"]] = act
+
+    elif command == "actions/unregister":
+        for name in data.get("action_names", []):
+            session.registered_actions.pop(name, None)
+
+    elif command == "actions/force":
+        query = data.get("query", "")
+        action_names = data.get("action_names", [])
+        state = data.get("state", "")
+        priority = data.get("priority", "low")
+        ephemeral_context = data.get("ephemeral_context", False)
+
+        session.forced_action_names = list(action_names)
+
+        ProtocolRouter.event_bus.emit(
+            event_type="input",
+            data={
+                "type": "force_action",
+                "source": game,
+                "content": query,
+                "state": state,
+                "ephemeral_context": ephemeral_context,
+                "session_id": session.client_id,
+                "action_names": action_names,
+            },
+            priority=priority
+        )  # 触发LLM
+
+    elif command == "action/result":
+        action_id = data.get("id")
+        if not action_id:
+            return
+        future = session.pending_actions.pop(action_id, None)
+        if future and not future.done():
+            future.set_result(data)
+
+def runtime_message_handler(client_id, message):
+    event = message.get("event").split('/')
+    data = message.get("data")
+    meta = message.get("meta")
+
 if __name__ == '__main__':
     llm_queue = queue.Queue()
 
@@ -717,6 +787,9 @@ if __name__ == '__main__':
             state=STATE,
             event_bus=EVENT_BUS,
         )
+        ProtocolRouter.set_message_handler("game", game_message_handler)
+        ProtocolRouter.set_message_handler("runtime", runtime_message_handler)
+
 
         threading.Thread(target=llm_worker, daemon=True).start()
         threading.Thread(target=tts_worker, daemon=True).start()
