@@ -26,20 +26,26 @@ class NoteManager:
         await client.register_actions([
             Action(
                 name="take_note",
-                description="将笔记写入持久笔记存储, 你可以在prompt中看到",
+                description=(
+                    "将笔记写入持久笔记存储。默认追加；"
+                    "只有需要替换整份笔记时才指定 overwrite。"
+                ),
                 schema={
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string"
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "需要记入笔记的内容",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["append", "overwrite"],
+                            "default": "append",
+                            "description": "追加或覆盖；默认追加",
+                        },
                     },
-                    "mode": {
-                        "type": "string",
-                        "description": "\"append\" | \"overwrite\"",
-                    }
+                    "required": ["message"],
                 },
-                "required": ["content", "mode"]
-            }
             )
         ])
 
@@ -50,8 +56,8 @@ class NoteManager:
 
             if action_name == "take_note":
                 try:
-                    content = data.get("content")
-                    mode = data.get("mode")
+                    content = data.get("message", data.get("content"))
+                    mode = data.get("mode", "append")
 
                     if mode not in ("append", "overwrite"):
                         await client.send_action_result(
