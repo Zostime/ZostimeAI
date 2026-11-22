@@ -193,7 +193,6 @@ class ProtocolRouter:
                 self.pending_action_id: Optional[str] = None
                 self.pending_actions: Dict[str, asyncio.Future] = {}
                 self.forced_action_names: list = []
-                self.force_payload: Optional[dict] = None
 
         @staticmethod
         async def handle(websocket: WebSocketServerProtocol, client_id: int):
@@ -242,10 +241,13 @@ class ProtocolRouter:
             elif command == "context":
                 message = data.get("message", "")
                 silent = data.get("silent", True)
-                if silent:
-                    ProtocolRouter.state.agent.unread_events.append(f"来自{game}的msg:{message}")
-                else:
-                    ProtocolRouter.state.agent.unread_events.append(f"[应该回复]来自{game}的msg:{message}")
+                context_event = f"来自{game}的msg:{message}"
+                with ProtocolRouter.state.agent.context_lock:
+                    ProtocolRouter.state.agent.unread_events.append(context_event)
+                    if not silent:
+                        ProtocolRouter.state.agent.response_events.append(
+                            f"[应该回复]{context_event}"
+                        )
 
             elif command == "actions/register":
                 for act in data.get("actions", []):
@@ -263,12 +265,6 @@ class ProtocolRouter:
                 ephemeral_context = data.get("ephemeral_context", False)
 
                 session.forced_action_names = list(action_names)
-                if not ephemeral_context:
-                    session.force_payload = {
-                        "query": query,
-                        "state": state
-                    }
-                    ProtocolRouter.state.agent.unread_events.append(f"来自{game}的[force]: {session.force_payload}")
 
                 ProtocolRouter.event_bus.emit(
                     event_type="input",
@@ -276,6 +272,7 @@ class ProtocolRouter:
                         "type": "force_action",
                         "source": game,
                         "content": query,
+                        "state": state,
                         "ephemeral_context": ephemeral_context,
                         "session_id": session.client_id,
                         "action_names": action_names,
